@@ -137,6 +137,21 @@ class InMemoryStore:
             existing: ArticleRecord | None = articles.get(article.article_id)
             if existing is not None and existing != article:
                 raise RequestConflict("A saved snapshot cannot be overwritten.")
+            text: str = " ".join(
+                " ".join(passage.text for passage in article.passages).split(),
+            )
+            for saved in articles.values():
+                saved_text: str = " ".join(
+                    " ".join(passage.text for passage in saved.passages).split(),
+                )
+                if text != saved_text:
+                    continue
+                if saved.outlet_id == article.outlet_id and saved.canonical_url == article.canonical_url:
+                    return saved
+                article = article.model_copy(update={
+                    "duplicate_of": saved.duplicate_of or saved.article_id,
+                })
+                break
             articles[article.article_id] = article
             return article
 
@@ -144,6 +159,11 @@ class InMemoryStore:
         """Read authorized collected evidence without contacting a source."""
         with self._lock:
             return self._articles[conversation_id][article_id]
+
+    def list_articles(self, conversation_id: str) -> tuple[ArticleRecord, ...]:
+        """List immutable snapshots collected in this conversation only."""
+        with self._lock:
+            return tuple(self._articles[conversation_id].values())
 
     def save_research(
         self,

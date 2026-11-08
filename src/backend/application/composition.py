@@ -10,6 +10,7 @@ from agents import ModelSettings
 from agents.extensions.models.litellm_model import LitellmModel
 
 from backend.application.settings import Settings
+from backend.sources.service import ArticleSourceService
 from backend.interfaces.http.app import create_http_app
 from backend.infrastructure.persistence import InMemoryStore
 
@@ -22,7 +23,9 @@ def build_app(settings: Settings, model: object) -> FastAPI:
     app.state.settings = settings
     app.state.model = model
     app.state.model_settings = build_model_settings(settings)
-    app.state.store = InMemoryStore()
+    store: InMemoryStore = InMemoryStore()
+    app.state.store = store
+    app.state.sources = ArticleSourceService(store)
     return app
 
 

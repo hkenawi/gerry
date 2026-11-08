@@ -37,6 +37,35 @@ class SourceAccessStatus(StrEnum):
     BUDGET_EXHAUSTED = "budget_exhausted"
 
 
+class SourceMetadataField(StrEnum):
+    """Name publisher metadata fields interpreted by the extraction boundary."""
+
+    TYPE = "@type"
+    GRAPH = "@graph"
+    URL = "url"
+    HEADLINE = "headline"
+    PUBLISHED = "datePublished"
+    UPDATED = "dateModified"
+    AUTHOR = "author"
+    NAME = "name"
+    FREE_ACCESS = "isAccessibleForFree"
+
+
+class OutletIdentifier(StrEnum):
+    """Keep roster keys shared by discovery strategies and configuration in sync."""
+
+    NPR = "npr"
+    NBC = "nbc"
+    HUFFPOST = "huffpost"
+    ABC = "abc"
+    CBS = "cbs"
+    FOX = "fox"
+    DAILY_CALLER = "dailycaller"
+    BREITBART = "breitbart"
+    NEW_YORK_POST = "nypost"
+    EXAMINER = "examiner"
+
+
 @dataclass(frozen=True)
 class SourceConstants:
     """Expose source vocabulary and immutable-record validation settings."""
@@ -44,6 +73,12 @@ class SourceConstants:
     article_types: type[ArticleType] = ArticleType
     access_statuses: type[SourceAccessStatus] = SourceAccessStatus
     groups: type[SourceGroup] = SourceGroup
+    metadata: type[SourceMetadataField] = SourceMetadataField
+    outlet_ids: type[OutletIdentifier] = OutletIdentifier
+    article_schema_types: tuple[str, ...] = (
+        "NewsArticle", "Article", "ReportageNewsArticle", "AnalysisNewsArticle",
+        "OpinionNewsArticle",
+    )
     model_config: ClassVar[ConfigDict] = ConfigDict(
         frozen=True,
         extra="forbid",

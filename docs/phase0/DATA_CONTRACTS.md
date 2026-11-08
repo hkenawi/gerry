@@ -1,5 +1,9 @@
 # Phase 0: proposed data boundaries
 
+Latest implementation details are in [the Phase 2 handoff](../PHASE_2_HANDOFF.md).
+The user's later in-memory storage decision supersedes the Firestore proposal
+below; restart recovery is deferred for the prototype.
+
 Person B contracts, November 8, 2026. Article/passages and source-result models
 are implemented; discovery, retrieval, and persistence adapters remain future
 work. Review cross-boundary changes with Person A before wiring the tools.
