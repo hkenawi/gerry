@@ -1,0 +1,396 @@
+{
+  "tested_on": "2026-11-08",
+  "recorded_at": "2026-11-08T21:54:25.930411+00:00",
+  "environment": "Local outbound curl requests; not Cloud Run. Chat web search used only to locate historical URLs.",
+  "extraction": {
+    "library": "trafilatura",
+    "version": "2.3.1",
+    "function": "bare_extraction",
+    "options": {
+      "include_comments": false,
+      "include_tables": false,
+      "favor_precision": true,
+      "with_metadata": true
+    }
+  },
+  "feeds": [
+    {
+      "outlet_id": "npr",
+      "requested_url": "https://feeds.npr.org/1004/rss.xml",
+      "http_status": 200,
+      "item_count": 10,
+      "earliest_item_at": "2026-11-06T20:42:51+00:00",
+      "latest_item_at": "2026-11-08T19:25:30+00:00",
+      "response_sha256": "2ddf7ec8e1e17182dd364533e25af143d125637398e46e13e51e5f052c3c2c45"
+    },
+    {
+      "outlet_id": "nbc",
+      "requested_url": "https://feeds.nbcnews.com/nbcnews/public/world",
+      "http_status": 200,
+      "item_count": 25,
+      "earliest_item_at": "2026-10-30T10:39:23+00:00",
+      "latest_item_at": "2026-11-08T12:03:34+00:00",
+      "response_sha256": "9705f259aaab4cde7f473b20425b858d2fc604361d16479cbb0f0b607309dc6b"
+    },
+    {
+      "outlet_id": "huffpost",
+      "requested_url": "https://www.huffpost.com/section/world-news/feed",
+      "http_status": 200,
+      "item_count": 6,
+      "earliest_item_at": "2026-11-06T11:13:01+00:00",
+      "latest_item_at": "2026-11-08T04:28:38+00:00",
+      "response_sha256": "935a5932abf5fdd1a327e3bf71bd251260bd870f8ba29b284d2cc490b0427983"
+    },
+    {
+      "outlet_id": "abc",
+      "requested_url": "https://abcnews.go.com/abcnews/internationalheadlines",
+      "http_status": 200,
+      "item_count": 25,
+      "earliest_item_at": "2026-11-07T02:18:31+00:00",
+      "latest_item_at": "2026-11-08T19:11:26+00:00",
+      "response_sha256": "890341f6fa59a515ba8259776a1468cd6b367b20370c7dfe71cddf6ca5842ccb"
+    },
+    {
+      "outlet_id": "cbs",
+      "requested_url": "https://www.cbsnews.com/latest/rss/world",
+      "http_status": 200,
+      "item_count": 30,
+      "earliest_item_at": "2026-11-06T11:19:00+00:00",
+      "latest_item_at": "2026-11-08T20:40:38+00:00",
+      "response_sha256": "1a7c14d2c92cff480a38db7aa9d9c1df22e664a2c873806bf863a0fecac3b071"
+    },
+    {
+      "outlet_id": "fox",
+      "requested_url": "https://moxie.foxnews.com/google-publisher/world.xml",
+      "http_status": 200,
+      "item_count": 25,
+      "earliest_item_at": "2026-10-30T14:04:16+00:00",
+      "latest_item_at": "2026-11-07T22:17:37+00:00",
+      "response_sha256": "6eb9dd5fb2bbc8229b267aa994a4dfbc6b762de6195f4a91375ec3df6b3574c1"
+    },
+    {
+      "outlet_id": "dailycaller",
+      "requested_url": "https://dailycaller.com/feed/",
+      "http_status": 200,
+      "item_count": 25,
+      "earliest_item_at": "2026-11-06T11:00:00+00:00",
+      "latest_item_at": "2026-11-08T19:37:28+00:00",
+      "response_sha256": "4bcbdc1d93fd93336b28e7570f8b157c6bb99c2b6ecfffc4de6316896afd6a2f"
+    },
+    {
+      "outlet_id": "breitbart",
+      "requested_url": "https://www.breitbart.com/feed/",
+      "http_status": 200,
+      "item_count": 48,
+      "earliest_item_at": "2026-11-06T18:21:49+00:00",
+      "latest_item_at": "2026-11-08T20:48:09+00:00",
+      "response_sha256": "eddbcd494387445baf312006c4b58db3860d1eeca2c44648930ac16df1594662"
+    },
+    {
+      "outlet_id": "nypost",
+      "requested_url": "https://nypost.com/world-news/feed/",
+      "http_status": 200,
+      "item_count": 20,
+      "earliest_item_at": "2026-11-07T13:00:00+00:00",
+      "latest_item_at": "2026-11-08T18:19:13+00:00",
+      "response_sha256": "07087d5f65c9575f1fbb4ec4d7936b4547266f98d8c477f8f63e5e51ee99db4d"
+    },
+    {
+      "outlet_id": "examiner",
+      "requested_url": "https://www.washingtonexaminer.com/feed/",
+      "http_status": 200,
+      "item_count": 10,
+      "earliest_item_at": "2026-11-08T18:00:00+00:00",
+      "latest_item_at": "2026-11-08T21:11:32+00:00",
+      "response_sha256": "14f8fab0fa40356ddf685c6e75a56f47da28e0c75c314c178a162d7da474a955"
+    }
+  ],
+  "articles": [
+    {
+      "outlet_id": "abc",
+      "sample": "recent",
+      "requested_url": "https://abcnews.com/International/wireStory/tourists-locals-recount-fatal-krakow-mass-shooting-left-137952616",
+      "extracted_canonical_url": "https://abcnews.com/International/wireStory/tourists-locals-recount-fatal-krakow-mass-shooting-left-137952616",
+      "http_status": 200,
+      "title": "Tourists and locals recount fatal Krakow mass shooting that left Poland reeling",
+      "extracted_author": "ABC News; RAFAL NIEDZIELSKI Associated Press; CLAUDIA CIOBANU Associated Press",
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T13:21:00.000Z"
+      ],
+      "extracted_word_count": 620,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "e6b011e1acd17c9f3bbfcd43382801b539608f92efb3f3ad7c30b60fa475a004"
+    },
+    {
+      "outlet_id": "breitbart",
+      "sample": "recent",
+      "requested_url": "https://www.breitbart.com/europe/2026/11/08/russia-targets-emergency-workers-at-site-of-deadly-strike-ukraine-claims/",
+      "extracted_canonical_url": "https://www.breitbart.com/europe/2026/11/08/russia-targets-emergency-workers-at-site-of-deadly-strike-ukraine-claims/",
+      "http_status": 200,
+      "title": "Russia Targets Emergency Workers at Site of Deadly Strike, Ukraine Claims",
+      "extracted_author": "Breitbart London",
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T13:21:43Z"
+      ],
+      "extracted_word_count": 489,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "b3940c705679b35cd2694b9fc5dea65638cc67663a52c7e36ad1db967d8062c5"
+    },
+    {
+      "outlet_id": "cbs",
+      "sample": "recent",
+      "requested_url": "https://www.cbsnews.com/news/poland-mourns-krakow-mass-shooting-victims-terrorism-probe/",
+      "extracted_canonical_url": "https://www.cbsnews.com/news/poland-mourns-krakow-mass-shooting-victims-terrorism-probe/",
+      "http_status": 200,
+      "title": "Poland mourns victims of Krakow mass shooting as terrorism probe launched",
+      "extracted_author": null,
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T08:59:00-0500"
+      ],
+      "extracted_word_count": 655,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "f9bc9288efd6509a8e320259ceacaebde921f5191857d706de93235a1a16583a"
+    },
+    {
+      "outlet_id": "dailycaller",
+      "sample": "recent",
+      "requested_url": "https://dailycaller.com/2026/11/08/poland-defense-minister-krakow-shooting-act-of-terror",
+      "extracted_canonical_url": "https://dailycaller.com/2026/11/08/poland-defense-minister-krakow-shooting-act-of-terror/",
+      "http_status": 200,
+      "title": "Defense Minister Calls Deadly Shooting \u2018Act Of Terror\u2019 After 6 Killed, 15 Injured In Allied Nation",
+      "extracted_author": "Mark Tanos",
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T19:07:06.000Z"
+      ],
+      "extracted_word_count": 580,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "746a8f7c4b86b313013c7ad2215a977d43d89c3a56e9b93eb8444df9060132b2"
+    },
+    {
+      "outlet_id": "examiner",
+      "sample": "recent",
+      "requested_url": "https://www.washingtonexaminer.com/news/world/4796859/cairo-giza-egypt-train-crash-collision/",
+      "extracted_canonical_url": "https://www.washingtonexaminer.com/news/world/4796859/cairo-giza-egypt-train-crash-collision/",
+      "http_status": 200,
+      "title": "Collision between two trains in Egypt kills seven and injures more than 100",
+      "extracted_author": "The Associated Press",
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T20:20:10+00:00"
+      ],
+      "extracted_word_count": 85,
+      "assessment": "short_text_completeness_unresolved",
+      "response_sha256": "5b1edf43265e1a9b5af21695c9343add26df9409fa03b057e33ba3d966a8b1f2"
+    },
+    {
+      "outlet_id": "fox",
+      "sample": "recent",
+      "requested_url": "https://www.foxnews.com/world/gunman-opens-fire-moving-car-european-tourist-hotspot-leaving-5-dead-12-wounded",
+      "extracted_canonical_url": "https://www.foxnews.com/world/gunman-opens-fire-moving-car-european-tourist-hotspot-leaving-5-dead-12-wounded",
+      "http_status": 200,
+      "title": "Gunman opens fire from moving car in European tourist hot spot, leaving 6 dead and at least 15 wounded",
+      "extracted_author": "Robert McGreevy",
+      "extractor_date": "2026-11-07",
+      "publisher_date_candidates": [
+        "2026-11-07T12:37:33-05:00"
+      ],
+      "extracted_word_count": 816,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "cfb23a8b313056723d5a1dc5a51f101d0d693c488cc8c4dab8cad35ece1a89b7"
+    },
+    {
+      "outlet_id": "huffpost",
+      "sample": "recent",
+      "requested_url": "https://www.huffpost.com/entry/poland-mass-shooting-krakow_n_6aef9a9de4b037ca1034dbb5",
+      "extracted_canonical_url": "https://www.huffpost.com/entry/poland-mass-shooting-krakow_n_6aef9a9de4b037ca1034dbb5",
+      "http_status": 200,
+      "title": "Poland In Shock After Six Die In Krakow Mass Shooting",
+      "extracted_author": "Jakub Porzycki; Karol Badohal; Marek Strzelecki",
+      "extractor_date": "2026-11-07",
+      "publisher_date_candidates": [
+        "2026-11-07T21:44:26Z"
+      ],
+      "extracted_word_count": 911,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "9135de4ded5dc8acc4fa037d6a756560ac971be3ceadd56ec017bae038aa1b92"
+    },
+    {
+      "outlet_id": "nbc",
+      "sample": "recent",
+      "requested_url": "https://www.nbcnews.com/world/europe/krakow-shooting-killed-6-motivated-far-right-views-rcna608080",
+      "extracted_canonical_url": "https://www.nbcnews.com/world/europe/krakow-shooting-killed-6-motivated-far-right-views-rcna608080",
+      "http_status": 200,
+      "title": "Parents, sister of far-right Krak\u00f3w shooter found dead in family home",
+      "extracted_author": "Freddie Clayton; Shayna Jacobs",
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T12:03:34.678Z",
+        "Fri Nov 06 2026 00:03:00 GMT+0000 (UTC)",
+        "Fri Nov 06 2026 00:03:13 GMT+0000 (UTC)",
+        "Fri Nov 06 2026 00:04:07 GMT+0000 (UTC)",
+        "Fri Nov 06 2026 23:44:26 GMT+0000 (UTC)",
+        "Fri Nov 06 2026 23:53:03 GMT+0000 (UTC)",
+        "Fri Nov 06 2026 23:53:14 GMT+0000 (UTC)",
+        "Sat Apr 10 2021 17:35:00 GMT+0000 (UTC)",
+        "Sat Mar 20 2021 08:30:08 GMT+0000 (UTC)",
+        "Sat May 21 2022 14:18:57 GMT+0000 (UTC)",
+        "Sat Nov 07 2026 00:16:39 GMT+0000 (UTC)",
+        "Sat Nov 07 2026 00:18:59 GMT+0000 (UTC)",
+        "Sat Nov 07 2026 00:33:27 GMT+0000 (UTC)",
+        "Sat Nov 07 2026 01:26:33 GMT+0000 (UTC)",
+        "Sat Nov 07 2026 23:38:51 GMT+0000 (UTC)",
+        "Sat Nov 07 2026 23:54:19 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 00:02:09 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 00:03:49 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 00:08:18 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 00:10:08 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 00:15:09 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 02:14:42 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 18:19:04 GMT+0000 (UTC)",
+        "Sun Nov 08 2026 20:09:11 GMT+0000 (UTC)",
+        "Thu Nov 05 2026 23:41:19 GMT+0000 (UTC)",
+        "Thu Nov 05 2026 23:49:54 GMT+0000 (UTC)",
+        "Thu Nov 05 2026 23:53:18 GMT+0000 (UTC)",
+        "Tue Jun 21 2022 13:28:11 GMT+0000 (UTC)",
+        "Tue May 03 2022 13:09:57 GMT+0000 (UTC)",
+        "Wed Jul 28 2021 13:50:00 GMT+0000 (UTC)",
+        "Wed Nov 04 2026 18:56:27 GMT+0000 (UTC)"
+      ],
+      "extracted_word_count": 1378,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "45438580a037af79bbac8a64ddb50da7e4af75d452606610a499151fb17f0f25"
+    },
+    {
+      "outlet_id": "npr",
+      "sample": "recent",
+      "requested_url": "https://www.npr.org/2026/11/08/nx-s1-6034014/europe-join-us-brokered-ukraine-talks-abu-dhabi-russia",
+      "extracted_canonical_url": "https://www.npr.org/2026/11/08/nx-s1-6034014/europe-join-us-brokered-ukraine-talks-abu-dhabi-russia",
+      "http_status": 200,
+      "title": "Europe to join U.S.-brokered Ukraine talks in Abu Dhabi, defying Kremlin objections",
+      "extracted_author": "Willem Marx",
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T14:25:30-05:00"
+      ],
+      "extracted_word_count": 820,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "39773ce6b1aca136a2f6cf134260ddb3f78abf87488e88e6145537d29bd13cbe"
+    },
+    {
+      "outlet_id": "nypost",
+      "sample": "recent",
+      "requested_url": "https://nypost.com/2026/11/08/world-news/hero-polish-cop-takes-down-crazed-krakow-mass-shooter-and-then-collapses/",
+      "extracted_canonical_url": "https://nypost.com/2026/11/08/world-news/hero-polish-cop-takes-down-crazed-krakow-mass-shooter-and-then-collapses/",
+      "http_status": 200,
+      "title": "Hero Polish cop who took down Krakow mass shooter is fighting for his life after deadly terror attack",
+      "extracted_author": "Patrick Reilly",
+      "extractor_date": "2026-11-08",
+      "publisher_date_candidates": [
+        "2026-11-08T14:32:22Z"
+      ],
+      "extracted_word_count": 613,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "42761d8f2e93b8fec69202ec6ad771a789be1a709019ca1a9bb09e3f27f20e91"
+    },
+    {
+      "outlet_id": "abc",
+      "sample": "historical",
+      "requested_url": "https://abcnews.com/International/pope-francis-everyman-leader-roman-catholic-church-dies/story?id=24335298",
+      "extracted_canonical_url": "https://abcnews.com/International/pope-francis-everyman-leader-roman-catholic-church-dies/story?id=24335298",
+      "http_status": 200,
+      "title": "Pope Francis, everyman leader of the Roman Catholic Church, dies at 88",
+      "extracted_author": "ABC News; Phoebe Natanson",
+      "extractor_date": "2025-04-21",
+      "publisher_date_candidates": [
+        "2025-04-21T08:06:00.000Z"
+      ],
+      "extracted_word_count": 2116,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "8a3b196b49eb08dc98cdabfd8a8b3dc6d9e3949e345e1bc278a7d980f473d377"
+    },
+    {
+      "outlet_id": "breitbart",
+      "sample": "historical",
+      "requested_url": "https://www.breitbart.com/politics/2025/04/21/trump-offers-condolences-after-death-of-pope-francis/",
+      "extracted_canonical_url": "https://www.breitbart.com/politics/2025/04/21/trump-offers-condolences-after-death-of-pope-francis/",
+      "http_status": 200,
+      "title": "Donald Trump Offers Condolences After Death of Pope Francis",
+      "extracted_author": "Bradley Jaye",
+      "extractor_date": "2025-04-21",
+      "publisher_date_candidates": [
+        "2025-04-21T13:31:47Z"
+      ],
+      "extracted_word_count": 288,
+      "assessment": "text_includes_author_bio_needs_cleanup",
+      "response_sha256": "048cf40548d5a8a46486aaa09c437f53705e11a2c85504a64e0b959fd9286b13"
+    },
+    {
+      "outlet_id": "cbs",
+      "sample": "historical",
+      "requested_url": "https://www.cbsnews.com/news/pope-francis-death-health-challenges/",
+      "extracted_canonical_url": "https://www.cbsnews.com/news/pope-francis-death-health-challenges/",
+      "http_status": 200,
+      "title": "Pope Francis' cause of death was stroke and irreversible heart failure, Vatican says",
+      "extracted_author": "Sara Moniuszko",
+      "extractor_date": "2025-04-21",
+      "publisher_date_candidates": [
+        "2025-04-21T12:40:00-0400"
+      ],
+      "extracted_word_count": 735,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "969b8384037c71cfcc011670a6e206c86880b39e0febd8d373ccb860423862c5"
+    },
+    {
+      "outlet_id": "dailycaller",
+      "sample": "historical",
+      "requested_url": "https://dailycaller.com/2025/04/21/pope-francis-dead-88-roman-catholic-church/",
+      "extracted_canonical_url": "https://dailycaller.com/2025/04/21/pope-francis-dead-88-roman-catholic-church/",
+      "http_status": 200,
+      "title": "\u2018God Help Us All\u2019: Sudden Death Of Pope Francis Provokes Reactions Across Roman Catholic Church, Trump Administration",
+      "extracted_author": "Thomas Wong",
+      "extractor_date": "2025-04-21",
+      "publisher_date_candidates": [
+        "2025-04-21T08:30:35.000Z"
+      ],
+      "extracted_word_count": 4755,
+      "assessment": "candidate_text_requires_application_validation",
+      "response_sha256": "4283f88f00ca497c2fd1fa5536eec072bf4c6908f75c523e40449f36190b2c7c"
+    },
+    {
+      "outlet_id": "examiner",
+      "sample": "historical",
+      "requested_url": "https://www.washingtonexaminer.com/news/world/3386465/pope-francis-cause-of-death-cerebral-stroke-heart-failure/",
+      "extracted_canonical_url": "https://www.washingtonexaminer.com/news/world/3386465/pope-francis-cause-of-death-cerebral-stroke-heart-failure/",
+      "http_status": 200,
+      "title": "Pope Francis died of cerebral stroke that led to heart failure",
+      "extracted_author": "Brady Knox",
+      "extractor_date": "2025-04-21",
+      "publisher_date_candidates": [
+        "2025-04-21T18:40:03+00:00"
+      ],
+      "extracted_word_count": 71,
+      "assessment": "short_text_completeness_unresolved",
+      "response_sha256": "c1fac0ab7e16956270404c5c0430d1bc8f2e5c328e692699bbd4863855500717"
+    },
+    {
+      "outlet_id": "fox",
+      "sample": "historical",
+      "requested_url": "https://www.foxnews.com/world/pope-francis-dead-88-vatican-says",
+      "extracted_canonical_url": "https://www.foxnews.com/world/pope-francis-dead-88-vatican-says",
+      "http_status": 200,
+      "title": "Pope Francis dead at 88, Vatican says",
+      "extracted_author": "Caitlin McFall; Emma Colton; Fox News Staff; Chris Massaro",
+      "extractor_date": "2025-02-19",
+      "publisher_date_candidates": [
+        "2025-04-21T04:49:01-04:00"
+      ],
+      "extracted_word_count": 2021,
+      "assessment": "extractor_date_conflicts_with_publisher_metadata",
+      "response_sha256": "8473716cc4836c8fcb7cd787fc62bac67326e48f25f71b008927bf579c3d77f0"
+    }
+  ]
+}
