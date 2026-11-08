@@ -1,9 +1,15 @@
 # Phase 0: proposed data boundaries
 
-Person B draft, November 8, 2026. Review with Person A before implementing these
-interfaces. These tables specify field types, not a new framework or class tree.
-Use the agreed Pydantic records and small typed functions where validation is
-needed. Shared status values will use the required scoped Enum/dataclass pattern.
+Person B contracts, November 8, 2026. Article/passages and source-result models
+are implemented; discovery, retrieval, and persistence adapters remain future
+work. Review cross-boundary changes with Person A before wiring the tools.
+
+Public imports:
+
+- `backend.sources.articles`: `ArticleRecord`, `ArticlePassage`, `PublicationDate`.
+- `backend.sources.access`: `ArticleCandidate`, `SourceAccessOutcome`,
+  `ArticleSearchResult`, `ArticleReadResult`.
+- `backend.sources.constants`: `SOURCE_CONSTANTS` scopes article/access enums.
 
 ## Article and passage records
 
@@ -22,7 +28,7 @@ needed. Shared status values will use the required scoped Enum/dataclass pattern
 | `reporting_origin` | `str \| None` | Explicit original source, such as AP or Reuters; unknown stays null. |
 | `syndicated` | `bool \| None` | True/false only when established; otherwise unknown. |
 | `duplicate_of` | `UUID \| None` | Another saved snapshot identified as the same reporting. |
-| `passages` | `tuple[Passage, ...]` | Ordered, nonempty article paragraphs after cleanup. |
+| `passages` | `tuple[ArticlePassage, ...]` | Ordered, nonempty article paragraphs after cleanup. |
 
 | Passage field | Python type | Meaning |
 | --- | --- | --- |
@@ -31,6 +37,10 @@ needed. Shared status values will use the required scoped Enum/dataclass pattern
 
 Full text is derived by joining passages with blank lines, avoiding a second copy.
 Assign IDs once when saving; keep them unchanged when reading saved evidence.
+Models are frozen, and passage IDs must match the snapshot UUID and sequential
+paragraph number. Serialize UUIDs as strings when passing evidence IDs to Person
+A's `MainFocus`; its existing string fields remain unchanged. A contract test
+exercises this boundary. Reference resolution against saved evidence comes later.
 Changed text creates a new snapshot, so old citations continue to resolve. Reuse
 an existing saved snapshot for an unchanged canonical URL/content pair. Compare
 saved text directly initially; a stored content hash is unnecessary at this scale.
@@ -51,6 +61,10 @@ Extractor-wide date guesses are insufficient: the Fox sample demonstrates why.
 
 `search_articles` receives a query, inclusive start/end dates, and trusted outlet
 assignments. A result contains candidates and per-outlet access outcomes.
+`ArticleSearchResult` holds `candidates: tuple[ArticleCandidate, ...]` and
+`outcomes: tuple[SourceAccessOutcome, ...]`. It requires at least one outcome,
+one per queried outlet; every candidate must have a successful outlet outcome.
+The caller remains responsible for checking against the trusted assignment.
 
 | Candidate field | Python type |
 | --- | --- |
@@ -63,10 +77,14 @@ Search dates are revalidated against publisher metadata during retrieval.
 
 `read_article` receives a candidate URL plus trusted outlet/conversation context.
 It returns either a validated, successfully saved article or an explicit failure.
+`ArticleReadResult` holds `outcome: SourceAccessOutcome` and
+`article: ArticleRecord | None`. Success requires an article from that outlet;
+failure requires no article. These schemas cannot prove persistence occurred:
+the future read implementation must finish saving before returning success.
 `read_collected_article` receives an article ID plus conversation context and reads
 only authorized saved evidence. It cannot fetch externally or silently refresh it.
 
-Proposed access outcomes: `success`, `no_results`, `paywall`, `access_denied`,
+Implemented access outcomes: `success`, `no_results`, `paywall`, `access_denied`,
 `missing_date`, `date_conflict`, `outside_window`, `incomplete_text`, `fetch_failed`,
 `extraction_failed`, `storage_failed`, and `budget_exhausted`. Outcomes carry
 `outlet_id: str`, `url: str | None`, `http_status: int | None`, and
@@ -89,6 +107,8 @@ Keep one fixed record per outlet: `outlet_id: str`, `display_name: str`,
 Group is `liberal` or `conservative`, assigned by the project. The access report
 contains the proposed roster and provenance. Keep exact host permissions rather
 than authorizing every subdomain; explicitly account for ABC's observed redirect.
+The roster/configuration model remains unimplemented. Reuse Person A's existing
+`SourceGroup` rather than defining a competing group enum.
 
 ## Storage proposal and handoff
 
@@ -118,7 +138,15 @@ Person A needs to review these concrete boundaries:
 API/history validation, progress transport, model selection, and request lifecycle
 remain Person A's draft contracts. Do not invent them in source or UI code.
 
-For implementation, proposed public test boundaries are source search/read
-results and storage save/load behavior. Confirm these before application tests,
-then follow the TDD skill one behavior at a time. No application code, dependency
-manifest, frontend scaffold, or tests were changed during this documentation pass.
+Person A's initial code was reviewed: `/chat` envelopes, brief, findings, tool
+records, failure categories, and progress models/SSE encoding. No source code in
+those components was changed. Access statuses are more granular than application
+failures: Person A should map `storage_failed` to `PERSISTENCE_FAILURE` and
+`budget_exhausted` to `RESEARCH_LIMIT_REACHED`, and agree how other source outcomes
+produce a partial answer or request-level failure. `no_results` is not proof of
+absent coverage or automatically an HTTP error.
+
+The user confirmed public article/passage models, source-result models, and
+compatibility with Person A's findings as this slice's test boundaries. Tests
+followed red/green cycles and remain offline. Storage save/load tests belong to
+the next agreed storage slice. Project dependency files were left unchanged.

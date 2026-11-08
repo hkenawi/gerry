@@ -10,14 +10,28 @@ import pytest
 from backend.application.settings import ConfigurationError, load_settings
 
 
-def test_missing_model_name_raises_error_naming_the_variable() -> None:
-    """
-    Startup must fail clearly, naming the missing variable.
-    """
-    with pytest.raises(ConfigurationError) as error:
-        load_settings({"GEMINI_API_KEY": "key-value-123"})
+def test_default_model_matches_bibs_and_uses_google_credentials() -> None:
+    """Use the chosen Vertex model without requiring a Gemini API key."""
+    settings = load_settings({})
 
-    assert "GERRY_MODEL" in str(error.value)
+    assert settings.model_name == "vertex_ai/gemini-3.5-flash-lite"
+    assert settings.vertex_location == "global"
+    assert settings.api_key is None
+
+
+def test_search_and_model_call_limits_can_be_overridden() -> None:
+    """Expose explicit request-wide ceilings for the later research workflow."""
+    settings = load_settings(
+        {
+            "GERRY_MAX_SEARCH_CALLS": "6",
+            "GERRY_MAX_MODEL_CALLS": "12",
+            "GERRY_MAX_OUTPUT_TOKENS": "2048",
+        },
+    )
+
+    assert settings.max_search_calls == 6
+    assert settings.max_model_calls == 12
+    assert settings.max_output_tokens == 2048
 
 
 def test_research_ceilings_default_to_agreed_placeholder_values() -> None:

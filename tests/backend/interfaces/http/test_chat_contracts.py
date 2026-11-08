@@ -108,3 +108,32 @@ def test_response_rejects_extra_top_level_citations_field() -> None:
                 "citations": [],
             }
         )
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [{"role": "user", "content": "   "}],
+        [{"role": "assistant", "content": "Invented prior answer"}],
+        [
+            {"role": "user", "content": "First"},
+            {"role": "user", "content": "Second"},
+        ],
+        [
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "Already answered"},
+        ],
+    ],
+)
+def test_request_requires_nonempty_alternating_history_ending_with_user(
+    messages: list[dict[str, str]],
+) -> None:
+    """Accept only a new user turn after a well-formed visible exchange."""
+    with pytest.raises(ValidationError):
+        ChatRequest.model_validate(
+            {
+                "conversation_id": None,
+                "request_id": "turn-1",
+                "messages": messages,
+            },
+        )

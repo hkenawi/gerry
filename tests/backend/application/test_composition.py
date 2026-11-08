@@ -6,6 +6,7 @@ from httpx import AsyncClient, ASGITransport
 
 from backend.application.settings import Settings
 from backend.application.composition import build_app
+from backend.infrastructure.persistence import InMemoryStore
 
 
 class FakeModel:
@@ -36,3 +37,12 @@ async def test_built_app_serves_requests_using_the_injected_model() -> None:
         response = await client.get("/health")
     assert response.status_code == 200
     assert app.state.model is fake_model
+
+
+def test_each_application_receives_an_independent_memory_store() -> None:
+    """Avoid module-global storage and let backend replacement start empty."""
+    first = build_app(Settings(), FakeModel())
+    second = build_app(Settings(), FakeModel())
+
+    assert isinstance(first.state.store, InMemoryStore)
+    assert first.state.store is not second.state.store
