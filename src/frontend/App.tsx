@@ -1,6 +1,7 @@
 /** Present Gerry's purpose and verify the backend without invoking research. */
 import { useEffect, useState } from "react";
 import ResearchAnswer from "./ResearchAnswer";
+import Chat from "./Chat";
 
 type ConnectionState = "checking" | "ready" | "unavailable";
 
@@ -58,10 +59,10 @@ export default function App({ answer }: { answer?: string } = {}) {
           <button type="button" onClick={() => setAttempt((value) => value + 1)}>
             Try again
           </button>
-        ) : <p className="availability-note">Research will be available here soon.</p>}
+        ) : null}
       </section>
 
-      {answer && <ResearchAnswer answer={answer} />}
+      {answer ? <ResearchAnswer answer={answer} /> : connection === "ready" && <Chat />}
       <footer>A comparison of sampled reporting, with attribution and context.</footer>
     </main>
   );

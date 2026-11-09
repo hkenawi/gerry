@@ -182,8 +182,8 @@ and progress transport still need decisions informed by early experiments.
 ### Completion criteria
 
 - The first complete vertical slice works through the browser.
-- Refresh clears the conversation, while a later turn in an existing open session
-  can load state after backend replacement.
+- Refresh starts a new conversation. An active session can reuse its saved
+  research until the backend process restarts, per the prototype storage decision.
 - Network retries do not create duplicate completed turns or duplicate research.
 - Every visible progress message corresponds to real work. Puns are restrained;
   error messages remain straightforward.

@@ -51,6 +51,7 @@ class RequestRecord:
     conversation_id: str
     status: RequestStatus = PERSISTENCE_CONSTANTS.statuses.RUNNING
     response: ChatResponse | None = None
+    response_status: int = 200
 
 
 class InMemoryStore:
@@ -110,7 +111,13 @@ class InMemoryStore:
                 record, status=PERSISTENCE_CONSTANTS.statuses.INTERRUPTED,
             )
 
-    def complete_request(self, response: ChatResponse) -> None:
+    def request_status(self, request_id: str) -> RequestStatus | None:
+        """Read lifecycle status without copying the request or its answer."""
+        with self._lock:
+            record: RequestRecord | None = self._requests.get(request_id)
+            return record.status if record is not None else None
+
+    def complete_request(self, response: ChatResponse, status_code: int = 200) -> None:
         """Save a completed response and append its visible exchange atomically."""
         with self._lock:
             record: RequestRecord = self._requests[response.request_id]
@@ -118,14 +125,16 @@ class InMemoryStore:
                 raise RequestConflict("Only a running request can be completed.")
             if record.conversation_id != response.conversation_id:
                 raise RequestConflict("Response belongs to another conversation.")
-            self._conversations[record.conversation_id] += (
-                deepcopy(record.request.messages[-1]),
-                ChatMessage(role=CHAT_CONSTANTS.roles.ASSISTANT, content=response.answer),
-            )
+            if status_code < 400:
+                self._conversations[record.conversation_id] += (
+                    deepcopy(record.request.messages[-1]),
+                    ChatMessage(role=CHAT_CONSTANTS.roles.ASSISTANT, content=response.answer),
+                )
             self._requests[response.request_id] = replace(
                 record,
                 status=PERSISTENCE_CONSTANTS.statuses.COMPLETED,
                 response=deepcopy(response),
+                response_status=status_code,
             )
 
     def save_article(

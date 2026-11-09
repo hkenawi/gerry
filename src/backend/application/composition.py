@@ -7,6 +7,7 @@ clients, so tests can inject fakes and no provider is contacted at startup.
 
 from fastapi import FastAPI
 from agents import ModelSettings
+from agents.models.interface import Model
 from agents.extensions.models.litellm_model import LitellmModel
 
 from backend.application.settings import Settings
@@ -16,18 +17,22 @@ from backend.interfaces.http.app import create_http_app
 from backend.infrastructure.persistence import InMemoryStore
 
 
-def build_app(settings: Settings, model: object) -> FastAPI:
+def build_app(settings: Settings, model: Model) -> FastAPI:
     """
     Assemble the HTTP application from validated settings and an injected model.
     """
-    app = create_http_app()
+    store: InMemoryStore = InMemoryStore()
+    model_settings: ModelSettings = build_model_settings(settings)
+    # The application owns and counts retries, so the source layer must not retry.
+    sources: ArticleSourceService = ArticleSourceService(
+        store, limits=SourceLimits(max_retries=0),
+    )
+    app: FastAPI = create_http_app(settings, model, store, sources, model_settings)
     app.state.settings = settings
     app.state.model = model
-    app.state.model_settings = build_model_settings(settings)
-    store: InMemoryStore = InMemoryStore()
+    app.state.model_settings = model_settings
     app.state.store = store
-    # The application owns and counts retries, so the source layer must not retry.
-    app.state.sources = ArticleSourceService(store, limits=SourceLimits(max_retries=0))
+    app.state.sources = sources
     return app
 
 

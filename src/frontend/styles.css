@@ -29,6 +29,23 @@ button:hover { background: #30475c; }
 a:focus-visible, button:focus-visible { outline: 3px solid #b54a38; outline-offset: 4px; }
 footer { margin: 56px 0 30px; }
 
+.chat { margin-top: 32px; }
+.chat-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chat-question { padding: 14px 18px; border-radius: 8px; background: #eeece5; white-space: pre-wrap; }
+.chat-form { display: grid; gap: 10px; margin-top: 20px; }
+.chat-form label { font-weight: 600; }
+.chat-form textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #deddd6;
+  border-radius: 8px;
+  resize: vertical;
+  font: inherit;
+}
+.chat-form button { justify-self: end; }
+.chat button:disabled { opacity: .55; cursor: default; }
+.chat [role="alert"] { color: #8c493b; }
+
 .research-answer { margin: 32px 0; line-height: 1.65; }
 .research-answer a { color: #315b78; overflow-wrap: anywhere; }
 .comparison-scroll { overflow-x: auto; }

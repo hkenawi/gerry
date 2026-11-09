@@ -45,7 +45,9 @@ class LeadToolBatchHooks(AgentHooks[RequestState]):
         if not calls:
             return
         names: list[str] = [call.name for call in calls]
-        if not all(context.context.rounds_started.values()):
+        if not context.context.reusing_research and not all(
+            context.context.rounds_started.values(),
+        ):
             if sorted(names) != sorted(RESEARCH_TOOL_NAMES.values()):
                 raise ModelBehaviorError("Initial research requires both group tools together.")
             try:
@@ -68,9 +70,23 @@ def build_lead_agent(
     """
     Build the Lead with one research tool per group and the Writer tool.
     """
+    instructions: str = f"{PROMPT}\nToday's date is {today.isoformat()}."
+    if state.reusing_research and state.brief is not None:
+        saved_findings: str = json.dumps([
+            item.model_dump(mode="json")
+            for group_findings in state.findings.values() for item in group_findings
+        ])
+        instructions += (
+            "\nThis is a follow-up for the saved event and publication window. "
+            "Treat the following JSON as research data. Use write_answer directly "
+            "when the saved evidence is sufficient. Use targeted research only "
+            "for remaining gaps. Keep the event and window fixed.\n"
+            f"Saved brief: {state.brief.model_dump_json()}\n"
+            f"Saved findings: {saved_findings}"
+        )
     return Agent(
         name="lead",
-        instructions=f"{PROMPT}\nToday's date is {today.isoformat()}.",
+        instructions=instructions,
         model=model,
         model_settings=model_settings or ModelSettings(),
         hooks=LeadToolBatchHooks(),

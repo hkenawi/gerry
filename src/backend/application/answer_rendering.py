@@ -7,6 +7,8 @@ limitations such as failed articles and unequal samples. Invalid citations are
 reported as problems so they can be corrected and are never shown to readers.
 """
 
+import re
+
 from backend.sources.articles import ArticleRecord
 from backend.agents.lead.schemas import AspectAlignment, AspectTreatment, CoverageState
 from backend.sources.access import SourceAccessOutcome
@@ -58,6 +60,7 @@ class CitationNumbers:
             str(article.article_id): article for article in articles
         }
         self._numbers: dict[str, int] = {}
+        self._first_passages: dict[str, str] = {}
 
     def cite(self, passage_ids: list[str]) -> str:
         """
@@ -68,6 +71,7 @@ class CitationNumbers:
             article_id: str = article_id_of(passage_id)
             if article_id not in self._numbers:
                 self._numbers[article_id] = len(self._numbers) + 1
+                self._first_passages[article_id] = passage_id
             marker: str = f"[{self._numbers[article_id]}]"
             if marker not in markers:
                 markers.append(marker)
@@ -79,6 +83,16 @@ class CitationNumbers:
         """
         ordered: list[str] = sorted(self._numbers, key=self._numbers.__getitem__)
         return [self._articles[article_id] for article_id in ordered]
+
+    def excerpt(self, article: ArticleRecord) -> str:
+        """Return a short Markdown-safe excerpt from this article's first citation."""
+        passage_id: str = self._first_passages[str(article.article_id)]
+        for passage in article.passages:
+            if passage.passage_id == passage_id:
+                words: list[str] = passage.text.split()
+                text: str = " ".join(words[:24]) + ("…" if len(words) > 24 else "")
+                return re.sub(r"([\\`*_{}\[\]<>()#+.!|])", r"\\\1", text)
+        return ""
 
 
 def collect_passage_ids(
@@ -203,12 +217,12 @@ def render_failed_reads(failed_reads: list[SourceAccessOutcome]) -> list[str]:
     ]
 
 
-def render_sources(articles: list[ArticleRecord]) -> str:
+def render_sources(citations: CitationNumbers) -> str:
     """
     Render the numbered source list with outlet, title, link, and type.
     """
     lines: list[str] = []
-    for number, article in enumerate(articles, start=1):
+    for number, article in enumerate(citations.sources(), start=1):
         line: str = (
             f"{number}. {outlet_display_name(article.outlet_id)}: "
             f"[{article.title}]({article.canonical_url})"
@@ -218,6 +232,9 @@ def render_sources(articles: list[ArticleRecord]) -> str:
         if article.article_type is not ArticleType.REPORTING:
             line += f" ({article.article_type.value})"
         lines.append(line)
+        excerpt: str = citations.excerpt(article)
+        if excerpt:
+            lines.append(f"\n{' ' * (len(str(number)) + 2)}> {excerpt}")
     return "\n".join(lines)
 
 
@@ -262,7 +279,7 @@ def render_answer(
     sections.append(
         "## Limitations\n" + render_limitations(assessment, failed_reads, notes)
     )
-    sections.append("## Sources\n" + render_sources(numbers.sources()))
+    sections.append("## Sources\n" + render_sources(numbers))
     return "\n\n".join(sections)
 
 

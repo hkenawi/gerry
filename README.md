@@ -3,8 +3,8 @@
 Compare how selected liberal and conservative news outlets cover the same
 international event, with attribution and supporting evidence.
 
-The backend foundation and React shell are in place. `/chat` currently returns
-a placeholder; the research workflow and briefing interface come in later phases.
+The local app accepts research questions and follow-ups. It shows progress,
+comparison tables, and citations that open the corresponding source excerpts.
 
 ## Local development
 
@@ -27,12 +27,11 @@ npm run dev
 ```
 
 Open [Gerry](http://127.0.0.1:5173). The development server forwards `/health`
-and `/chat` to the backend on port 8080. Starting the shell and checking backend
-availability do not invoke a model. Backend and frontend run separately during
-development; serving the frontend build from Python belongs to deployment work.
+and `/chat` to the backend on port 8080. Backend and frontend run separately
+during development. The page can load before configuring model credentials.
 
 The selected model is `vertex_ai/gemini-3.5-flash-lite` in `global`, matching
-`bibs`. Real model calls will require Google Application Default Credentials:
+`bibs`. Sending a chat message requires Google Application Default Credentials.
 
 ```bash
 gcloud config set project YOUR_PROJECT_ID
@@ -43,8 +42,9 @@ See [.env.example](.env.example) for optional environment overrides. Export them
 in your shell; the application does not automatically load `.env` files. No
 Gemini API key is required for the default Vertex configuration.
 
-Storage is intentionally in memory. Backend restarts lose conversations and
-collected evidence; run one backend process. Durable storage is deferred.
+Chat history stays in browser memory and clears on refresh. The backend keeps
+research and completed responses in memory for follow-ups and retries until it
+restarts. Run one backend process. After a restart, start a new chat.
 
 ## Development commands
 
@@ -58,5 +58,5 @@ npm run build
 ```
 
 Frontend build output goes to `src/frontend/dist`. Live backend tests remain
-opt-in: `uv run pytest -o addopts="" -m live`. No paid API checks are required
-for the foundation or frontend shell.
+opt-in with `uv run pytest -o addopts="" -m live`. The regular suite uses
+scripted model replies and fixture responses.

@@ -20,6 +20,7 @@ from backend.application.request_budget import RequestBudget
 from backend.agents.research_brief import ResearchBrief
 from backend.agents.researcher_findings import SourceGroup, ResearcherFindings
 from backend.application.tool_call_recorder import ToolCallRecorder
+from backend.application.tool_call_record import ToolCallRecord
 from backend.sources.access import (
     ArticleReadResult,
     ArticleSearchResult,
@@ -83,6 +84,7 @@ class RequestState:
     brief: ResearchBrief | None = None
     final_answer: str | None = None
     writer_calls: int = 0
+    reusing_research: bool = False
     research_slots: asyncio.Semaphore = field(init=False)
     findings: dict[SourceGroup, list[ResearcherFindings]] = field(
         default_factory=lambda: {group: [] for group in SourceGroup}
@@ -111,15 +113,30 @@ def build_request_state(
     store: InMemoryStore,
     sources: SourceGateway,
     clock: Callable[[], float] = time.monotonic,
+    *,
+    on_tool_record: Callable[[ToolCallRecord], None] | None = None,
 ) -> RequestState:
     """
     Create request state with a fresh budget and an empty tool-call recorder.
     """
-    return RequestState(
+    state: RequestState = RequestState(
         conversation_id=conversation_id,
         settings=settings,
         budget=RequestBudget(settings, clock=clock),
         store=store,
         sources=sources,
-        recorder=ToolCallRecorder(),
+        recorder=ToolCallRecorder(on_tool_record),
     )
+    brief: ResearchBrief
+    findings: tuple[ResearcherFindings, ...]
+    try:
+        brief, findings = store.load_research(conversation_id)
+    except KeyError:
+        return state
+    if brief.start_date is not None and brief.end_date is not None:
+        state.reusing_research = True
+        state.brief = brief
+        state.window = (brief.start_date, brief.end_date)
+        for item in findings:
+            state.findings[item.group].append(item)
+    return state
