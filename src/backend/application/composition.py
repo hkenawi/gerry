@@ -11,6 +11,7 @@ from agents.extensions.models.litellm_model import LitellmModel
 
 from backend.application.settings import Settings
 from backend.sources.service import ArticleSourceService
+from backend.sources.access.http import SourceLimits
 from backend.interfaces.http.app import create_http_app
 from backend.infrastructure.persistence import InMemoryStore
 
@@ -25,7 +26,8 @@ def build_app(settings: Settings, model: object) -> FastAPI:
     app.state.model_settings = build_model_settings(settings)
     store: InMemoryStore = InMemoryStore()
     app.state.store = store
-    app.state.sources = ArticleSourceService(store)
+    # The application owns and counts retries, so the source layer must not retry.
+    app.state.sources = ArticleSourceService(store, limits=SourceLimits(max_retries=0))
     return app
 
 
