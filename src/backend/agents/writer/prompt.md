@@ -20,6 +20,9 @@ Every claim must cite one or more passage IDs copied exactly from the evidence y
 were given. Never invent a passage ID. Each claim should be supported by the
 passages it cites.
 
+If essential evidence is missing, set `evidence_gap` to a specific neutral
+research question and leave the claim lists empty. Otherwise set it to null.
+
 Answer modes:
 
 - `comparison`: you may fill all three lists.

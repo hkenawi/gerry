@@ -76,6 +76,8 @@ def parse_discovery_document(
     query: str,
     start_date: date,
     end_date: date,
+    *,
+    expect_feed: bool = False,
 ) -> tuple[ArticleCandidate, ...]:
     """Parse feed/sitemap entries or archive links into restricted URL candidates."""
     candidates: list[ArticleCandidate] = []
@@ -95,7 +97,13 @@ def parse_discovery_document(
             root = ET.fromstring(document.body)
         except ET.ParseError:
             root = None
-    if root is not None and root.tag.rsplit("}", 1)[-1] in ("rss", "feed"):
+    kind: str = root.tag.rsplit("}", 1)[-1] if root is not None else ""
+    if expect_feed and kind not in ("rss", "feed"):
+        raise SourceAccessError(
+            SOURCE_CONSTANTS.access_statuses.EXTRACTION_FAILED,
+            "Publisher did not return an RSS or Atom feed.",
+        )
+    if root is not None and kind in ("rss", "feed"):
         entries: list[ET.Element] = root.findall(".//item") + root.findall("{*}entry")
         for entry in entries:
             title: str = entry.findtext("title") or entry.findtext("{*}title") or ""

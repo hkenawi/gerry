@@ -25,6 +25,10 @@ from backend.application.tool_call_record import ToolCallOutcome
 from backend.application.write_answer import WriteResult, write_answer
 
 LEAD_AGENT_NAME: str = "lead"
+WRITE_TOOL_NAME: str = "write_answer"
+RESEARCH_TOOL_NAMES: dict[SourceGroup, str] = {
+    group: f"research_{group.value}_coverage" for group in SourceGroup
+}
 
 
 def build_failure_reply(reason: str) -> str:
@@ -61,6 +65,8 @@ def check_brief(
         state.brief = brief
     elif state.window != window:
         return None, "The event window is fixed after the first research call."
+    elif state.brief is not None and state.brief.event != brief.event:
+        return None, "The event is fixed after the first research call."
     return window, None
 
 
@@ -77,16 +83,17 @@ async def research_group(
     """
     Run one Researcher round for a group and return findings or a failure as JSON.
     """
-    tool_name: str = f"research_{group.value}_coverage"
+    tool_name: str = RESEARCH_TOOL_NAMES[group]
     window, problem = check_brief(state, event, start_date, end_date)
     if problem is None and not state.try_start_round(group):
         problem = "The research-round limit for this group has been reached."
     outcome: ResearcherOutcome | None = None
     if problem is None and window is not None:
         try:
-            outcome = await run_researcher(
-                state, group, window, event, focus_question, model, model_settings
-            )
+            async with state.research_slots:
+                outcome = await run_researcher(
+                    state, group, window, event, focus_question, model, model_settings,
+                )
         except BudgetExceeded:
             problem = "The research limit was reached before this group finished."
         except MaxTurnsExceeded:
@@ -148,7 +155,7 @@ def build_research_tool(
 
     return function_tool(
         run,
-        name_override=f"research_{group.value}_coverage",
+        name_override=RESEARCH_TOOL_NAMES[group],
         description_override=(
             f"Run a fresh {group.value} researcher over its assigned outlets "
             "and return validated findings."
@@ -178,7 +185,7 @@ def build_writer_tool(
         )
         state.recorder.record(
             LEAD_AGENT_NAME,
-            "write_answer",
+            WRITE_TOOL_NAME,
             ToolCallOutcome.SUCCESS if result.succeeded else ToolCallOutcome.FAILURE,
             None if result.succeeded else result.message,
         )
@@ -186,7 +193,7 @@ def build_writer_tool(
 
     return function_tool(
         run,
-        name_override="write_answer",
+        name_override=WRITE_TOOL_NAME,
         description_override=(
             "Have the Writer produce the final cited answer from the collected "
             "research. Call it once research is finished."

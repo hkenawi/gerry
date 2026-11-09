@@ -29,6 +29,21 @@ button:hover { background: #30475c; }
 a:focus-visible, button:focus-visible { outline: 3px solid #b54a38; outline-offset: 4px; }
 footer { margin: 56px 0 30px; }
 
+.research-answer { margin: 32px 0; line-height: 1.65; }
+.research-answer a { color: #315b78; overflow-wrap: anywhere; }
+.comparison-scroll { overflow-x: auto; }
+.comparison-scroll:focus-visible { outline: 3px solid #b54a38; }
+.comparison-scroll table { width: 100%; min-width: 520px; border-collapse: collapse; }
+.comparison-scroll th, .comparison-scroll td {
+  padding: 12px;
+  border: 1px solid #deddd6;
+  text-align: left;
+  vertical-align: top;
+}
+.comparison-scroll th { background: #eeece5; }
+.research-sources { margin-top: 24px; padding: 14px 0; border-top: 1px solid #deddd6; }
+.research-sources summary { cursor: pointer; font-weight: 600; }
+
 @media (max-width: 600px) {
   main { padding: 0 22px; }
   .edition { display: none; }

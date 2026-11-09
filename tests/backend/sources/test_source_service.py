@@ -7,12 +7,19 @@ import pytest
 
 from datetime import date
 from threading import Barrier
+from xml.sax.saxutils import escape
 from concurrent.futures import ThreadPoolExecutor
 
 from backend.sources.service import ArticleSourceService
+from backend.sources.articles import ArticleRecord
+from backend.application.run_turn import TurnResult, run_turn
+from backend.application.settings import Settings
+from backend.application.request_state import RequestState, build_request_state
+from backend.sources.access import ArticleReadResult, ArticleSearchResult
 from backend.infrastructure.persistence import InMemoryStore
-from backend.interfaces.http.chat_contracts import ChatRequest
+from backend.interfaces.http.chat_contracts import ChatMessage, ChatRequest
 from backend.sources.access.http import FetchedDocument, SourceLimits
+from support.scripted_model import FinalOutput, ModelCall, ScriptedModel, ToolCalls
 
 
 ARTICLE_URL: str = "https://www.npr.org/story"
@@ -36,6 +43,93 @@ with ambulance crews. Schools would stay closed until structural inspections
 were complete. Authorities planned another briefing on Sunday and said updated
 information would be published as rescue teams reached the surrounding villages.</p>
 </article></body></html>'''
+
+
+async def test_turn_uses_real_source_discovery_extraction_and_evidence_storage() -> None:
+    """Run one cited comparison with the model and outbound HTTP scripted."""
+    store, conversation_id = build_store()
+    urls: tuple[str, ...] = (
+        ARTICLE_URL,
+        "https://abcnews.com/earthquake-rescue",
+        "https://www.foxnews.com/world/earthquake-rescue",
+        "https://dailycaller.com/earthquake-rescue",
+    )
+    entries: str = "".join(
+        f"<item><title>Earthquake rescue efforts</title><link>{escape(url)}</link>"
+        "<pubDate>Sat, 07 Nov 2026 09:00:00 -0500</pubDate></item>"
+        for url in urls
+    )
+    feed: bytes = f"<rss><channel>{entries}</channel></rss>".encode()
+
+    def fetch_fixture(
+        url: str,
+        hosts: tuple[str, ...],
+        limits: SourceLimits,
+    ) -> FetchedDocument:
+        """Return archive or feed items and serve their corresponding article bodies."""
+        if url in urls:
+            return FetchedDocument(
+                url, ARTICLE_HTML.replace(ARTICLE_URL.encode(), url.encode()), "text/html",
+            )
+        return FetchedDocument(url, feed, "application/rss+xml")
+
+    state: RequestState = build_request_state(
+        conversation_id, Settings(), store,
+        ArticleSourceService(store, fetcher=fetch_fixture),
+    )
+    brief: dict[str, str] = {
+        "event": "Earthquake rescue", "start_date": "2026-11-07", "end_date": "2026-11-08",
+    }
+
+    def reply(call: ModelCall) -> ToolCalls | FinalOutput:
+        """Drive each real agent using the citations returned by the source tools."""
+        outputs: list[str] = call.tool_results
+        if "You are the Lead" in call.system_instructions:
+            if not outputs:
+                return ToolCalls([
+                    (f"research_{group}_coverage", {**brief, "focus_question": None})
+                    for group in ("liberal", "conservative")
+                ])
+            if len(outputs) == 2:
+                return ToolCalls([("write_answer", {"question": brief["event"], "alignment": []})])
+            return FinalOutput({"brief": {**brief, "status": "clear"}})
+        if "You are the Writer" in call.system_instructions:
+            saved: tuple[ArticleRecord, ...] = store.list_articles(conversation_id)
+            passage_ids: list[str] = [article.passages[0].passage_id for article in saved]
+            assert len(passage_ids) == 4
+            assert all(passage_id in call.input_text for passage_id in passage_ids)
+            claim: dict[str, str | list[str]] = {
+                "text": "Both groups reported rescue work after the earthquake.",
+                "passage_ids": passage_ids,
+            }
+            return FinalOutput({"summary": [claim], "overlap": [claim]})
+        if not outputs:
+            return ToolCalls([("search_articles", {"query": brief["event"]})])
+        if len(outputs) == 1:
+            search: ArticleSearchResult = ArticleSearchResult.model_validate_json(outputs[0])
+            return ToolCalls([
+                ("read_article", {"url": candidate.url, "outlet_id": candidate.outlet_id})
+                for candidate in search.candidates
+            ])
+        reads: list[ArticleReadResult] = [
+            ArticleReadResult.model_validate_json(output) for output in outputs[1:]
+        ]
+        return FinalOutput({
+            "group": "liberal" if "Source group: liberal" in call.input_text else "conservative",
+            "article_ids": [str(read.article.article_id) for read in reads if read.article],
+            "main_focuses": [], "limitations": [],
+        })
+
+    result: TurnResult = await run_turn(
+        [ChatMessage.model_validate({"role": "user", "content": "Compare earthquake rescue coverage."})],
+        state, ScriptedModel(reply), today=date(2026, 11, 8),
+    )
+
+    assert result.failure is None
+    assert "## Where coverage overlaps" in result.answer
+    assert "## Where coverage differs" not in result.answer
+    assert "2 liberal articles from 2 outlets and 2 conservative articles from 2 outlets" in result.answer
+    assert all(url in result.answer for url in urls)
 
 
 def build_store() -> tuple[InMemoryStore, str]:
@@ -154,6 +248,27 @@ def test_search_filters_feed_candidates_without_collecting_them() -> None:
     assert len(result.candidates) == 1
     assert result.candidates[0].url == ARTICLE_URL
     assert store.list_articles(conversation_id) == ()
+
+
+def test_feed_replacement_page_is_reported_as_an_extraction_failure() -> None:
+    """Distinguish unusable feed responses from searches that found no matches."""
+    store, _ = build_store()
+
+    def fetch_replacement(
+        url: str,
+        hosts: tuple[str, ...],
+        limits: SourceLimits,
+    ) -> FetchedDocument:
+        """Return an HTML replacement page in place of the publisher's feed."""
+        return FetchedDocument(url, b"<html><p>Feed unavailable</p></html>", "text/html")
+
+    service: ArticleSourceService = ArticleSourceService(store, fetcher=fetch_replacement)
+    result = service.search_articles(
+        "earthquake", date(2026, 11, 7), date(2026, 11, 8), ("npr",),
+    )
+
+    assert result.outcomes[0].status.value == "extraction_failed"
+    assert result.candidates == ()
 
 
 def test_same_article_is_reused_without_another_fetch() -> None:

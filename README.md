@@ -22,7 +22,7 @@ Start the frontend in a second terminal:
 
 ```bash
 cd src/frontend
-npm install
+npm ci
 npm run dev
 ```
 

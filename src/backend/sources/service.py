@@ -89,6 +89,7 @@ class ArticleSourceService:
                     self._validate_document(document, (*outlet.feed_hosts, *outlet.article_hosts))
                     found.extend(parse_discovery_document(
                         document, outlet, query, start_date, end_date,
+                        expect_feed=url in outlet.feed_urls,
                     ))
                 except SourceAccessError as error:
                     failures.append(error)

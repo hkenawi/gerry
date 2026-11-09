@@ -50,7 +50,6 @@ async def run_with_correction(
     state: RequestState,
     validate: Callable[[Any], str | None],
     max_turns: int,
-    enforce_budget: bool = True,
 ) -> tuple[Any | None, str | None]:
     """
     Run the agent, allowing one correction if its output is rejected.
@@ -61,7 +60,7 @@ async def run_with_correction(
     """
     items: list[Any] = list(input_items)
     problem: str | None = None
-    hooks: BudgetHooks | None = BudgetHooks() if enforce_budget else None
+    hooks: BudgetHooks = BudgetHooks()
     for _ in range(MAXIMUM_ATTEMPTS):
         try:
             result = await Runner.run(

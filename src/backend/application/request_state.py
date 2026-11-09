@@ -7,6 +7,7 @@ so limits are enforced by code rather than by prompts.
 """
 
 import time
+import asyncio
 from uuid import UUID
 from datetime import date
 from typing import Callable, Protocol
@@ -82,12 +83,17 @@ class RequestState:
     brief: ResearchBrief | None = None
     final_answer: str | None = None
     writer_calls: int = 0
+    research_slots: asyncio.Semaphore = field(init=False)
     findings: dict[SourceGroup, list[ResearcherFindings]] = field(
         default_factory=lambda: {group: [] for group in SourceGroup}
     )
     rounds_started: dict[SourceGroup, int] = field(
         default_factory=lambda: {group: 0 for group in SourceGroup}
     )
+
+    def __post_init__(self) -> None:
+        """Limit simultaneous Researcher runs for this request."""
+        self.research_slots = asyncio.Semaphore(self.settings.max_concurrent_researchers)
 
     def try_start_round(self, group: SourceGroup) -> bool:
         """

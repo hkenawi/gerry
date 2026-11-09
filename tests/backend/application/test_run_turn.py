@@ -641,21 +641,57 @@ async def test_writer_tool_calls_are_capped_per_request(
     assert result.failure is FailureCategory.INVALID_OUTPUT
 
 
+@pytest.mark.parametrize("max_model_calls", [7, 8])
 async def test_spent_budget_after_research_still_yields_a_noted_partial_answer(
     make_state,
     fake_sources,
     articles,
+    max_model_calls: int,
 ) -> None:
-    """
-    If the Lead runs out of model calls after research, the Writer still runs.
-    """
+    """Use saved evidence when the Lead or Writer reaches the model-call limit."""
     scenario = Scenario()
     wire_full_scenario(scenario, fake_sources, articles)
-    state = make_state(Settings(max_model_calls=7))
+    state = make_state(Settings(max_model_calls=max_model_calls))
 
     result = await run_turn(MESSAGES, state, scenario.model)
 
     assert result.failure is None
     assert "research limit was reached" in result.answer
     assert "## Sources" in result.answer
-    assert len(scenario.writer_calls) == 1
+    assert scenario.writer_calls == []
+
+
+async def test_lead_cannot_start_one_research_group_on_its_own(make_state) -> None:
+    """Reject an incomplete fan-out before it starts a Researcher."""
+    def reply(call: ModelCall) -> ToolCalls | FinalOutput:
+        """Keep requesting an incomplete initial fan-out."""
+        if "You are the Lead" in call.system_instructions:
+            return ToolCalls([("research_liberal_coverage", WINDOW_ARGS)])
+        return FinalOutput(findings_payload(SourceGroup.LIBERAL, []))
+
+    model: ScriptedModel = ScriptedModel(reply)
+    result = await run_turn(MESSAGES, make_state(), model)
+
+    assert result.failure is FailureCategory.INVALID_OUTPUT
+    assert all("You are the Lead" in call.system_instructions for call in model.calls)
+
+
+async def test_writer_can_return_an_evidence_gap_to_the_lead(
+    make_state, fake_sources, articles,
+) -> None:
+    """Give the Lead the missing evidence request before storing any answer."""
+    scenario: Scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    scenario.writer_replies.insert(0, {"evidence_gap": "Check the timing of police response."})
+    scenario.lead_reply = fan_out_then(
+        alignment_for(articles["npr"], articles["fox"]), write_calls=2,
+    )
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert any(
+        "Check the timing of police response." in call.input_text
+        for call in scenario.model.calls if "You are the Lead" in call.system_instructions
+    )
+    assert "## Sources" in result.answer

@@ -35,6 +35,9 @@ mention is not a central focus. If the tool reports a failure, fix the problem i
 names and call it again; it allows only a few attempts. The tool stores the
 answer; you never write or see it.
 
+If the Writer identifies an evidence gap, use a targeted research follow-up
+within the existing limits before asking it to write again.
+
 Step 5 - finish. After `write_answer` succeeds, finish with a brief whose status
 is `clear`. Do not finish a clear brief without a successful `write_answer`.
 

@@ -52,7 +52,11 @@ class RequestBudget:
         """
         Report whether the request has run past its deadline.
         """
-        return self._clock() - self._started_at > self._deadline_seconds
+        return self.remaining_seconds() <= 0
+
+    def remaining_seconds(self) -> float:
+        """Return the time left on the request's shared deadline."""
+        return max(0.0, self._deadline_seconds - (self._clock() - self._started_at))
 
     def try_consume(self, resource: BudgetResource) -> bool:
         """

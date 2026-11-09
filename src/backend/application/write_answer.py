@@ -1,8 +1,8 @@
 """
 Produce the final cited answer: run the Writer, validate, render, and store it.
 
-This is the code behind the Lead's ``write_answer`` tool and the budget-limit
-fallback. Code decides the answer mode from the saved articles, validates the
+This is the code behind the Lead's ``write_answer`` tool. Code decides the
+answer mode from the saved articles, validates the
 alignment and the Writer's claims, renders the Markdown, and stores the result in
 the request state. The Lead never sees or edits the rendered text.
 """
@@ -65,12 +65,11 @@ async def write_answer(
     question: str,
     alignment: list[AspectAlignment],
     notes: tuple[str, ...] = (),
-    enforce_cap: bool = True,
 ) -> WriteResult:
     """
     Write, validate, render, and store the answer, or explain why it cannot be.
     """
-    if enforce_cap and state.writer_calls >= MAX_WRITER_CALLS:
+    if state.writer_calls >= MAX_WRITER_CALLS:
         return refuse("The Writer has already been tried the maximum number of times.")
     state.writer_calls += 1
     articles_by_group: dict[SourceGroup, tuple[ArticleRecord, ...]] = (
@@ -120,12 +119,13 @@ async def write_answer(
             state,
             validate,
             WRITER_MAX_TURNS,
-            enforce_budget=False,
         )
     except MaxTurnsExceeded:
         return refuse("The Writer ran out of steps before finishing.")
     if report is None:
         return refuse(problem or "The Writer could not produce a valid answer.")
+    if report.evidence_gap:
+        return refuse(f"The Writer needs more evidence. {report.evidence_gap}")
     state.final_answer = render_answer(
         report, alignment, assessment, articles, state.failed_reads, notes
     )

@@ -1,9 +1,10 @@
 /** Present Gerry's purpose and verify the backend without invoking research. */
 import { useEffect, useState } from "react";
+import ResearchAnswer from "./ResearchAnswer";
 
 type ConnectionState = "checking" | "ready" | "unavailable";
 
-export default function App() {
+export default function App({ answer }: { answer?: string } = {}) {
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [attempt, setAttempt] = useState(0);
 
@@ -60,6 +61,7 @@ export default function App() {
         ) : <p className="availability-note">Research will be available here soon.</p>}
       </section>
 
+      {answer && <ResearchAnswer answer={answer} />}
       <footer>A comparison of sampled reporting, with attribution and context.</footer>
     </main>
   );

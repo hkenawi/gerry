@@ -21,14 +21,16 @@ from backend.agents.lead.schemas import LeadOutcome
 from backend.agents.research_brief import BriefStatus
 from backend.application.failure_category import FailureCategory, describe_failure
 from backend.application.collected_evidence import collect_articles_by_group
+from backend.application.answer_rendering import render_answer
+from backend.application.outlet_assignments import outlet_display_name
 from backend.application.request_state import RequestState
 from backend.application.sample_assessment import AnswerMode, assess_sample
 from backend.application.structured_run import BudgetExceeded, run_with_correction
 from backend.application.tool_call_record import ToolCallOutcome, ToolCallRecord
-from backend.application.write_answer import write_answer
+from backend.agents.writer.schemas import Claim, WriterReport
+from backend.sources.articles import ArticleRecord
 from backend.interfaces.http.chat_contracts import ChatMessage
 
-RESEARCH_TIME_SHARE: float = 0.7
 LIMIT_NOTE: str = (
     "The research limit was reached before every gap could be followed up, "
     "so some gaps remain."
@@ -80,6 +82,8 @@ async def run_lead_stage(
             return None
         if state.brief is None:
             return "Run research with both research tools before finishing."
+        if output.brief != state.brief:
+            return "Finish with the same event and publication window used for research."
         if state.final_answer is None:
             return "Call write_answer successfully before finishing."
         return None
@@ -96,40 +100,37 @@ async def run_lead_stage(
                 validate,
                 state.settings.max_lead_turns,
             ),
-            timeout=state.settings.request_deadline_seconds,
+            timeout=state.budget.remaining_seconds(),
         )
     except (BudgetExceeded, MaxTurnsExceeded, TimeoutError):
         return None, None, True
     return output, problem, False
 
 
-async def run_fallback_writer(
-    state: RequestState,
-    model: Model,
-    model_settings: ModelSettings | None,
-) -> None:
-    """
-    Write from the evidence already collected after the Lead hit a limit.
-
-    The alignment is left empty because the Lead could not supply one.
-    """
-    assert state.brief is not None
-    try:
-        await asyncio.wait_for(
-            write_answer(
-                state,
-                model,
-                model_settings,
-                state.brief.event,
-                [],
-                notes=(LIMIT_NOTE,),
-                enforce_cap=False,
-            ),
-            timeout=state.settings.request_deadline_seconds
-            * (1 - RESEARCH_TIME_SHARE),
+def render_limited_answer(state: RequestState) -> str | None:
+    """List verified article headlines and citations after a request limit."""
+    groups = collect_articles_by_group(state)
+    assessment = assess_sample(groups)
+    if assessment.mode is AnswerMode.NO_EVIDENCE:
+        return None
+    articles: tuple[ArticleRecord, ...] = tuple(
+        article for group_articles in groups.values() for article in group_articles
+    )
+    report: WriterReport = WriterReport(summary=[
+        Claim(
+            text=f"{outlet_display_name(article.outlet_id)} published “{article.title}”.",
+            passage_ids=[article.passages[0].passage_id],
         )
-    except (MaxTurnsExceeded, TimeoutError):
-        return
+        for article in articles
+    ])
+    return render_answer(
+        report,
+        [],
+        assessment,
+        articles,
+        state.failed_reads,
+        (LIMIT_NOTE, "This partial result lists the available headlines."),
+    )
 
 
 async def run_turn(
@@ -142,7 +143,7 @@ async def run_turn(
     """
     Answer one turn: clarify, or research both groups and let the Lead call the Writer.
     """
-    outcome, problem, limit_hit = await run_lead_stage(
+    outcome, _, limit_hit = await run_lead_stage(
         state, model, model_settings, messages, today or date.today()
     )
     if limit_hit:
@@ -159,11 +160,8 @@ async def run_turn(
             outcome.brief.clarifying_question or "",
             state.recorder.records,
         )
-    if state.final_answer is None and limit_hit and state.brief is not None:
-        assessment = assess_sample(collect_articles_by_group(state))
-        if assessment.mode is AnswerMode.NO_EVIDENCE:
-            return build_failure_result(state, FailureCategory.RESEARCH_LIMIT_REACHED)
-        await run_fallback_writer(state, model, model_settings)
+    if state.final_answer is None and limit_hit:
+        state.final_answer = render_limited_answer(state)
     if state.final_answer is None:
         category: FailureCategory = (
             FailureCategory.RESEARCH_LIMIT_REACHED
