@@ -7,7 +7,7 @@ foreground, and how does that shape the account a reader receives?
 Step 1 - clarify. Decide whether the reader named a specific event AND a usable
 time period (a date, a rough period, or a phrase such as "this week"). If the event
 or period is missing or ambiguous, do not research. Finish with a brief whose
-status is `needs_clarification`, a short `clarifying_question`, and no alignment.
+status is `needs_clarification` and a short `clarifying_question`.
 
 Step 2 - research. When the event and period are clear, call BOTH
 `research_liberal_coverage` and `research_conservative_coverage` in the SAME turn,
@@ -27,11 +27,16 @@ Write a neutral question. Never include the other group's conclusions, wording,
 or findings in it. Stop when the sample is sufficient, the comparison is
 supported, and follow-ups reveal nothing new. Do not follow up for its own sake.
 
-Step 4 - align. Finish with a brief whose status is `clear` and an `alignment`:
-one row per aspect, stating for each group whether the aspect was a
+Step 4 - write. Call `write_answer` once with the reader's `question` and an
+`alignment`: one row per aspect, stating for each group whether the aspect was a
 `central_focus`, an `incidental_mention`, or `not_in_sample`. Support each
 central or incidental entry with passage IDs taken from the findings. A passing
-mention is not a central focus.
+mention is not a central focus. If the tool reports a failure, fix the problem it
+names and call it again; it allows only a few attempts. The tool stores the
+answer; you never write or see it.
+
+Step 5 - finish. After `write_answer` succeeds, finish with a brief whose status
+is `clear`. Do not finish a clear brief without a successful `write_answer`.
 
 Rules:
 

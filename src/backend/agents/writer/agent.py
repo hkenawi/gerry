@@ -1,7 +1,8 @@
 """
 The Writer agent: produces cited claims from already-collected evidence.
 
-The Writer runs after research ends. It cannot browse; its only tool re-reads
+The Lead calls the Writer through its ``write_answer`` tool once research ends.
+The Writer cannot browse; its only tool re-reads
 articles already saved for the conversation. Application code renders the final
 answer from its claims and verifies every citation.
 """
@@ -91,6 +92,7 @@ def describe_evidence(articles: tuple[ArticleRecord, ...]) -> str:
 
 
 def build_writer_input(
+    question: str,
     brief: ResearchBrief,
     assessment: SampleAssessment,
     alignment: list[AspectAlignment],
@@ -101,6 +103,7 @@ def build_writer_input(
     Assemble the evidence package the Writer works from.
     """
     return (
+        f"Reader's question: {question}\n"
         f"Event: {brief.event}\n"
         f"Answer mode: {assessment.mode.value}\n"
         f"Mode reason: {assessment.reason or 'none'}\n"

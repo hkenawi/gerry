@@ -80,6 +80,8 @@ class RequestState:
     failed_reads: list[SourceAccessOutcome] = field(default_factory=list)
     window: tuple[date, date] | None = None
     brief: ResearchBrief | None = None
+    final_answer: str | None = None
+    writer_calls: int = 0
     findings: dict[SourceGroup, list[ResearcherFindings]] = field(
         default_factory=lambda: {group: [] for group in SourceGroup}
     )

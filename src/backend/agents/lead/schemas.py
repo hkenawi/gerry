@@ -54,8 +54,9 @@ class AspectAlignment(BaseModel):
 
 class LeadOutcome(BaseModel):
     """
-    The Lead's final output: a brief, plus an alignment once research is done.
+    The Lead's final output: the brief, clear or needing clarification.
+
+    The aspect alignment is passed to the Writer tool, not returned here.
     """
 
     brief: ResearchBrief
-    alignment: list[AspectAlignment] = Field(default_factory=list)

@@ -15,12 +15,14 @@ from agents.exceptions import MaxTurnsExceeded
 from agents.models.interface import Model
 from pydantic import ValidationError
 
+from backend.agents.lead.schemas import AspectAlignment
 from backend.agents.research_brief import BriefStatus, ResearchBrief
 from backend.agents.researcher.agent import ResearcherOutcome, run_researcher
 from backend.agents.researcher_findings import SourceGroup
 from backend.application.request_state import RequestState
 from backend.application.structured_run import BudgetExceeded
 from backend.application.tool_call_record import ToolCallOutcome
+from backend.application.write_answer import WriteResult, write_answer
 
 LEAD_AGENT_NAME: str = "lead"
 
@@ -150,5 +152,43 @@ def build_research_tool(
         description_override=(
             f"Run a fresh {group.value} researcher over its assigned outlets "
             "and return validated findings."
+        ),
+    )
+
+
+def build_writer_tool(
+    state: RequestState,
+    model: Model,
+    model_settings: ModelSettings | None,
+) -> FunctionTool:
+    """
+    Build the Lead's tool that has the Writer produce the final cited answer.
+    """
+
+    async def run(question: str, alignment: list[AspectAlignment]) -> str:
+        """
+        Write the final cited answer from the research collected so far.
+
+        Args:
+            question: The reader's question, in plain words.
+            alignment: One row per aspect comparing the two groups' coverage.
+        """
+        result: WriteResult = await write_answer(
+            state, model, model_settings, question, alignment
+        )
+        state.recorder.record(
+            LEAD_AGENT_NAME,
+            "write_answer",
+            ToolCallOutcome.SUCCESS if result.succeeded else ToolCallOutcome.FAILURE,
+            None if result.succeeded else result.message,
+        )
+        return result.message
+
+    return function_tool(
+        run,
+        name_override="write_answer",
+        description_override=(
+            "Have the Writer produce the final cited answer from the collected "
+            "research. Call it once research is finished."
         ),
     )

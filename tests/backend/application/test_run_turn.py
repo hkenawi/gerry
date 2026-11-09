@@ -73,9 +73,9 @@ def findings_payload(group: SourceGroup, articles: list) -> dict[str, Any]:
     }
 
 
-def lead_outcome(alignment: list[dict[str, Any]]) -> dict[str, Any]:
+def lead_outcome() -> dict[str, Any]:
     """
-    Build the Lead's final structured output for a clear brief.
+    Build the Lead's final structured output: a clear brief.
     """
     return {
         "brief": {
@@ -83,8 +83,7 @@ def lead_outcome(alignment: list[dict[str, Any]]) -> dict[str, Any]:
             "event": "Paris protests",
             "start_date": "2026-11-01",
             "end_date": "2026-11-07",
-        },
-        "alignment": alignment,
+        }
     }
 
 
@@ -124,23 +123,34 @@ class Scenario:
         return self.researcher_replies[group](call)
 
 
-def fan_out_then(final: dict[str, Any]):
+def fan_out_then(alignment: list[dict[str, Any]], write_calls: int = 1):
     """
-    Build a Lead script: research both groups in one turn, then finish.
+    Build a Lead script: research both groups in one turn, call the Writer tool,
+    then finish with a clear brief.
     """
 
     def reply(call: ModelCall):
         """
-        Call both research tools together, then return the final outcome.
+        Fan out first, write next, and finish once writing has been attempted.
         """
-        if not call.tool_results:
+        done: int = len(call.tool_results)
+        if done == 0:
             return ToolCalls(
                 [
                     ("research_liberal_coverage", WINDOW_ARGS),
                     ("research_conservative_coverage", WINDOW_ARGS),
                 ]
             )
-        return FinalOutput(final)
+        if done < 2 + write_calls:
+            return ToolCalls(
+                [
+                    (
+                        "write_answer",
+                        {"question": MESSAGES[0].content, "alignment": alignment},
+                    )
+                ]
+            )
+        return FinalOutput(lead_outcome())
 
     return reply
 
@@ -230,7 +240,7 @@ def wire_full_scenario(scenario: Scenario, fake_sources, articles) -> None:
     liberal = [articles["npr"], articles["nbc"]]
     conservative = [articles["fox"], articles["nypost"]]
     scenario.lead_reply = fan_out_then(
-        lead_outcome(alignment_for(articles["npr"], articles["fox"]))
+        alignment_for(articles["npr"], articles["fox"])
     )
     scenario.researcher_replies = {
         SourceGroup.LIBERAL: search_read_then(
@@ -259,8 +269,7 @@ async def test_unclear_request_gets_a_clarifying_question_and_no_research(
                 "status": "needs_clarification",
                 "event": "the protests",
                 "clarifying_question": "Which protests, and roughly when?",
-            },
-            "alignment": [],
+            }
         }
     )
 
@@ -291,6 +300,12 @@ async def test_clear_request_fans_out_concurrently_and_returns_a_cited_compariso
     assert "## Sources" in result.answer
     agents = {record.agent for record in result.tool_calls}
     assert {"lead", "researcher_liberal", "researcher_conservative"} <= agents
+    assert any(
+        record.agent == "lead"
+        and record.tool == "write_answer"
+        and record.outcome == "success"
+        for record in result.tool_calls
+    )
     brief, findings = state.store.load_research(state.conversation_id)
     assert brief.event == "Paris protests"
     assert {item.group for item in findings} == set(SourceGroup)
@@ -344,7 +359,7 @@ async def test_a_side_with_no_usable_articles_gets_a_summary_not_a_comparison(
             "limitations": ["Every article was behind a paywall."],
         },
     )
-    scenario.lead_reply = fan_out_then(lead_outcome([]))
+    scenario.lead_reply = fan_out_then([])
     scenario.writer_replies = [
         {
             "summary": [
@@ -509,7 +524,7 @@ async def test_researcher_that_never_finishes_is_reported_and_does_not_stop_the_
     scenario.researcher_replies[SourceGroup.CONSERVATIVE] = lambda call: ToolCalls(
         [("search_articles", {"query": "again"})]
     )
-    scenario.lead_reply = fan_out_then(lead_outcome([]))
+    scenario.lead_reply = fan_out_then([])
     scenario.writer_replies = [
         {
             "summary": [
@@ -531,3 +546,116 @@ async def test_researcher_that_never_finishes_is_reported_and_does_not_stop_the_
         and record.outcome == "failure"
         for record in result.tool_calls
     )
+
+
+async def test_lead_cannot_finish_a_clear_brief_without_writing_the_answer(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    A Lead that skips the Writer tool is told to call it and then succeeds.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    fan_out = fan_out_then(alignment_for(articles["npr"], articles["fox"]))
+
+    def reply(call: ModelCall):
+        """
+        Finish early the first time, then write once corrected.
+        """
+        if len(call.tool_results) == 2 and "rejected" not in call.input_text:
+            return FinalOutput(lead_outcome())
+        return fan_out(call)
+
+    scenario.lead_reply = reply
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert "## Sources" in result.answer
+
+
+async def test_alignment_citing_the_wrong_group_is_returned_to_the_lead(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    A bad alignment never reaches the Writer; the Lead fixes it and retries.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    good = alignment_for(articles["npr"], articles["fox"])
+    bad = alignment_for(articles["fox"], articles["fox"])
+    sequence = [bad, good]
+
+    def reply(call: ModelCall):
+        """
+        Research, write with a bad alignment, then write again with a good one.
+        """
+        done = len(call.tool_results)
+        if done == 0:
+            return fan_out_then(good)(call)
+        if done in (2, 3):
+            return ToolCalls(
+                [
+                    (
+                        "write_answer",
+                        {"question": "q", "alignment": sequence[done - 2]},
+                    )
+                ]
+            )
+        return FinalOutput(lead_outcome())
+
+    scenario.lead_reply = reply
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert len(scenario.writer_calls) == 1
+    writes = [r for r in result.tool_calls if r.tool == "write_answer"]
+    assert [record.outcome for record in writes] == ["failure", "success"]
+
+
+async def test_writer_tool_calls_are_capped_per_request(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    After two failed Writer attempts a third call is refused without running it.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    invalid = {"summary": [{"text": "Made up.", "passage_ids": ["bogus-passage"]}]}
+    scenario.writer_replies = [invalid]
+    scenario.lead_reply = fan_out_then(
+        alignment_for(articles["npr"], articles["fox"]),
+        write_calls=3,
+    )
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert len(scenario.writer_calls) == 4
+    assert result.failure is FailureCategory.INVALID_OUTPUT
+
+
+async def test_spent_budget_after_research_still_yields_a_noted_partial_answer(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    If the Lead runs out of model calls after research, the Writer still runs.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    state = make_state(Settings(max_model_calls=7))
+
+    result = await run_turn(MESSAGES, state, scenario.model)
+
+    assert result.failure is None
+    assert "research limit was reached" in result.answer
+    assert "## Sources" in result.answer
+    assert len(scenario.writer_calls) == 1
