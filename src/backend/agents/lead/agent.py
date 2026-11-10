@@ -8,23 +8,22 @@ calls the Writer tool with an aspect alignment. Limits and validation are enforc
 
 import json
 
-from datetime import date
 from pathlib import Path
-
-from agents import Agent, AgentHooks, ModelResponse, ModelSettings, RunContextWrapper
-from agents.exceptions import ModelBehaviorError
+from datetime import date
 from agents.models.interface import Model
+from agents.exceptions import ModelBehaviorError
 from openai.types.responses import ResponseFunctionToolCall
+from agents import Agent, AgentHooks, ModelResponse, ModelSettings, RunContextWrapper
 
 from backend.agents.lead.schemas import LeadOutcome
+from backend.agents.researcher_findings import SourceGroup
+from backend.application.turn.request_state import RequestState
 from backend.agents.lead.tools import (
     WRITE_TOOL_NAME,
     RESEARCH_TOOL_NAMES,
     build_writer_tool,
     build_research_tool,
 )
-from backend.agents.researcher_findings import SourceGroup
-from backend.application.request_state import RequestState
 
 PROMPT: str = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8")
 
@@ -91,11 +90,9 @@ def build_lead_agent(
         model_settings=model_settings or ModelSettings(),
         hooks=LeadToolBatchHooks(),
         tools=[
-            build_research_tool(state, SourceGroup.LIBERAL, model, model_settings),
-            build_research_tool(
-                state, SourceGroup.CONSERVATIVE, model, model_settings
-            ),
-            build_writer_tool(state, model, model_settings),
+            build_research_tool(SourceGroup.LIBERAL, model, model_settings),
+            build_research_tool(SourceGroup.CONSERVATIVE, model, model_settings),
+            build_writer_tool(model, model_settings),
         ],
         output_type=LeadOutcome,
     )

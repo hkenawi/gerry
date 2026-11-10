@@ -1,28 +1,27 @@
 """
-Research tools the Lead calls to run a Researcher for one source group.
+Tools the Lead calls to run a group Researcher or the Writer.
 
 Each tool starts a fresh-context Researcher with the group's trusted outlet and
 date restrictions. The first call fixes the event window for the whole request;
-later calls must reuse it. Findings are saved by code, never by the model.
-"""
+later calls must reuse it. The tools use the active run's context to record
+outcomes and save validated findings and answers."""
 
 import json
-from datetime import date
-from typing import Awaitable, Callable
 
-from agents import FunctionTool, ModelSettings, function_tool
-from agents.exceptions import MaxTurnsExceeded
-from agents.models.interface import Model
+from datetime import date
 from pydantic import ValidationError
+from agents.models.interface import Model
+from agents.exceptions import MaxTurnsExceeded
+from agents import FunctionTool, ModelSettings, RunContextWrapper, function_tool
 
 from backend.agents.lead.schemas import AspectAlignment
+from backend.agents.researcher_findings import SourceGroup
+from backend.application.turn.request_state import RequestState
+from backend.application.turn.tool_calls import ToolCallOutcome
+from backend.application.turn.structured_run import BudgetExceeded
 from backend.agents.research_brief import BriefStatus, ResearchBrief
 from backend.agents.researcher.agent import ResearcherOutcome, run_researcher
-from backend.agents.researcher_findings import SourceGroup
-from backend.application.request_state import RequestState
-from backend.application.structured_run import BudgetExceeded
-from backend.application.tool_call_record import ToolCallOutcome
-from backend.application.write_answer import WriteResult, write_answer
+from backend.application.answer.write_answer import WriteResult, write_answer
 
 LEAD_AGENT_NAME: str = "lead"
 WRITE_TOOL_NAME: str = "write_answer"
@@ -31,22 +30,13 @@ RESEARCH_TOOL_NAMES: dict[SourceGroup, str] = {
 }
 
 
-def build_failure_reply(reason: str) -> str:
-    """
-    Encode a failed research call as JSON the Lead can read.
-    """
-    return json.dumps({"status": "failed", "reason": reason})
-
-
 def check_brief(
     state: RequestState,
     event: str,
     start_date: str,
     end_date: str,
 ) -> tuple[tuple[date, date] | None, str | None]:
-    """
-    Validate the brief, fixing the window on the first call and keeping it after.
-    """
+    """Validate the brief and fix the event and window on the first call."""
     try:
         brief: ResearchBrief = ResearchBrief.model_validate(
             {
@@ -59,15 +49,14 @@ def check_brief(
     except ValidationError:
         return None, "The event, start_date, and end_date were not a valid brief."
     assert brief.start_date is not None and brief.end_date is not None
-    window: tuple[date, date] = (brief.start_date, brief.end_date)
-    if state.window is None:
-        state.window = window
+    previous: ResearchBrief | None = state.brief
+    if previous is None:
         state.brief = brief
-    elif state.window != window:
+    elif (previous.start_date, previous.end_date) != (brief.start_date, brief.end_date):
         return None, "The event window is fixed after the first research call."
-    elif state.brief is not None and state.brief.event != brief.event:
+    elif previous.event != brief.event:
         return None, "The event is fixed after the first research call."
-    return window, None
+    return (brief.start_date, brief.end_date), None
 
 
 async def research_group(
@@ -80,35 +69,43 @@ async def research_group(
     model: Model,
     model_settings: ModelSettings | None,
 ) -> str:
-    """
-    Run one Researcher round for a group and return findings or a failure as JSON.
-    """
+    """Run a group research round and return findings or a failure as JSON."""
     tool_name: str = RESEARCH_TOOL_NAMES[group]
+
+    def reject_research(reason: str | None) -> str:
+        """Record the failed call and explain it to the Lead."""
+        state.recorder.record(LEAD_AGENT_NAME, tool_name, ToolCallOutcome.FAILURE, reason)
+        return json.dumps({
+            "status": "failed",
+            "reason": reason or "No findings were produced.",
+        })
+
+    window: tuple[date, date] | None
+    problem: str | None
     window, problem = check_brief(state, event, start_date, end_date)
-    if problem is None and not state.try_start_round(group):
-        problem = "The research-round limit for this group has been reached."
-    outcome: ResearcherOutcome | None = None
-    if problem is None and window is not None:
-        try:
-            async with state.research_slots:
-                outcome = await run_researcher(
-                    state, group, window, event, focus_question, model, model_settings,
-                )
-        except BudgetExceeded:
-            problem = "The research limit was reached before this group finished."
-        except MaxTurnsExceeded:
-            problem = "The researcher ran out of steps before finishing."
-    if outcome is not None:
-        problem = outcome.failure
-    if problem is not None or outcome is None or outcome.findings is None:
-        state.recorder.record(
-            LEAD_AGENT_NAME, tool_name, ToolCallOutcome.FAILURE, problem
-        )
-        return build_failure_reply(problem or "No findings were produced.")
+    if problem is not None or window is None:
+        return reject_research(problem)
+    if not state.try_start_round(group):
+        return reject_research("The research-round limit for this group has been reached.")
+
+    try:
+        async with state.research_slots:
+            outcome: ResearcherOutcome = await run_researcher(
+                state, group, window, event, focus_question, model, model_settings,
+            )
+    except BudgetExceeded:
+        return reject_research("The research limit was reached before this group finished.")
+    except MaxTurnsExceeded:
+        return reject_research("The researcher ran out of steps before finishing.")
+    if outcome.failure is not None or outcome.findings is None:
+        return reject_research(outcome.failure)
+
+    brief: ResearchBrief | None = state.brief
+    assert brief is not None
     state.findings[group].append(outcome.findings)
     state.store.save_research(
         state.conversation_id,
-        state.brief,  # type: ignore[arg-type]
+        brief,
         tuple(item for items in state.findings.values() for item in items),
     )
     state.recorder.record(LEAD_AGENT_NAME, tool_name, ToolCallOutcome.SUCCESS)
@@ -118,16 +115,14 @@ async def research_group(
 
 
 def build_research_tool(
-    state: RequestState,
     group: SourceGroup,
     model: Model,
     model_settings: ModelSettings | None,
 ) -> FunctionTool:
-    """
-    Build the Lead's research tool for one group.
-    """
+    """Build the Lead's research tool for one source group."""
 
     async def run(
+        context: RunContextWrapper[RequestState],
         event: str,
         start_date: str,
         end_date: str,
@@ -140,10 +135,9 @@ def build_research_tool(
             event: The event to research, in plain words.
             start_date: First publication date, ISO format, inclusive.
             end_date: Last publication date, ISO format, inclusive.
-            focus_question: A neutral follow-up question, or null for a broad pass.
-        """
+            focus_question: A neutral follow-up question, or null for a broad pass."""
         return await research_group(
-            state,
+            context.context,
             group,
             event,
             start_date,
@@ -164,22 +158,23 @@ def build_research_tool(
 
 
 def build_writer_tool(
-    state: RequestState,
     model: Model,
     model_settings: ModelSettings | None,
 ) -> FunctionTool:
-    """
-    Build the Lead's tool that has the Writer produce the final cited answer.
-    """
+    """Build the Lead's tool for producing the final cited answer."""
 
-    async def run(question: str, alignment: list[AspectAlignment]) -> str:
+    async def run(
+        context: RunContextWrapper[RequestState],
+        question: str,
+        alignment: list[AspectAlignment],
+    ) -> str:
         """
         Write the final cited answer from the research collected so far.
 
         Args:
             question: The reader's question, in plain words.
-            alignment: One row per aspect comparing the two groups' coverage.
-        """
+            alignment: One row per aspect comparing the two groups' coverage."""
+        state: RequestState = context.context
         result: WriteResult = await write_answer(
             state, model, model_settings, question, alignment
         )

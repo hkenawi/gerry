@@ -6,7 +6,7 @@ Gemini and publisher access remain unverified. `/chat` wiring is Phase 4 work.
 
 ## What exists
 
-Public entry point: `backend.application.run_turn.run_turn(messages, state, model,
+Public entry point: `backend.application.turn.run_turn.run_turn(messages, state, model,
 model_settings=None, today=None) -> TurnResult`. It is a plain async function with
 no HTTP dependency. `TurnResult` holds `answer` (Markdown string), `tool_calls`
 (tuple of `ToolCallRecord`), and `failure` (`FailureCategory | None`).
@@ -22,15 +22,15 @@ protocol (the same three methods as `ArticleSourceService`).
 | Lead (clarify, fan out, follow up, align) | `src/backend/agents/lead/` |
 | Researcher (one definition, both groups) | `src/backend/agents/researcher/` |
 | Writer (cited claims, read-only tool), called by the Lead as `write_answer` | `src/backend/agents/writer/` |
-| `write_answer` (mode, validation, Writer run, rendering, storage) | `application/write_answer.py` |
-| Shared evidence view (articles per group) | `application/collected_evidence.py` |
+| `write_answer` (mode, validation, Writer run, rendering, storage) | `application/answer/write_answer.py` |
+| Shared evidence view (articles per group) | `application/evidence/collected_evidence.py` |
 | Source tool wrappers (group, window, budget, retries) | `agents/researcher/tools.py` |
-| Shared budget | `application/request_budget.py` |
-| Run with one correction attempt | `application/structured_run.py` |
-| Sample counts and answer mode | `application/sample_assessment.py` |
-| Findings checked against saved evidence | `application/findings_validation.py` |
-| Markdown rendering and citation checks | `application/answer_rendering.py` |
-| Orchestration | `application/run_turn.py` |
+| Shared budget | `application/turn/request_budget.py` |
+| Run with one correction attempt | `application/turn/structured_run.py` |
+| Sample counts and answer mode | `application/answer/sample_assessment.py` |
+| Findings checked against saved evidence | `application/evidence/findings_validation.py` |
+| Markdown rendering and citation checks | `application/answer/answer_rendering.py` |
+| Orchestration | `application/turn/run_turn.py` |
 
 Prompts are Markdown beside each agent (`prompt.md`).
 

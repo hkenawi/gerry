@@ -5,23 +5,23 @@ Shared fixtures for backend tests.
 fields that matter to the behavior under test.
 """
 
-from uuid import UUID, uuid4
-from typing import Callable
-from datetime import UTC, date, datetime
-
 import pytest
 
-from backend.sources.articles import ArticleRecord
-from backend.sources.constants import ArticleType
+from typing import Callable
+from uuid import UUID, uuid4
+from datetime import UTC, date, datetime
+
 from backend.application.settings import Settings
-from backend.interfaces.http.chat_contracts import ChatRequest
+from backend.sources.constants import ArticleType
+from backend.sources.articles import ArticleRecord
 from backend.infrastructure.persistence import InMemoryStore
+from backend.interfaces.http.chat_contracts import ChatRequest
+from backend.application.turn.request_state import RequestState, build_request_state
 from backend.sources.access import (
     ArticleReadResult,
     ArticleSearchResult,
     SourceAccessOutcome,
 )
-from backend.application.request_state import RequestState, build_request_state
 
 
 @pytest.fixture

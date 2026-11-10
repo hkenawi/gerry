@@ -1,13 +1,31 @@
-"""
-Collect reader-visible tool-call records for one request.
+"""Record tool activity during a chat turn.
 
-Every agent and tool wrapper appends here so the final response can show all
-sub-agent activity, including failed calls, in the order it happened.
-"""
+The HTTP response includes these records, and the recorder can notify a
+listener when a tool finishes so the progress stream can report it."""
 
+from enum import StrEnum
+from pydantic import BaseModel
 from collections.abc import Callable
 
-from backend.application.tool_call_record import ToolCallOutcome, ToolCallRecord
+
+class ToolCallOutcome(StrEnum):
+    """
+    Whether a tool call completed or failed.
+    """
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+
+class ToolCallRecord(BaseModel):
+    """
+    One tool invocation, attributed to the agent that made it.
+    """
+
+    agent: str
+    tool: str
+    outcome: ToolCallOutcome
+    error: str | None = None
 
 
 class ToolCallRecorder:

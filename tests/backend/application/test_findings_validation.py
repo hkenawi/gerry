@@ -1,14 +1,13 @@
 """
 Behavior tests for validating Researcher findings against saved evidence.
 
-Python, not the model, decides whether a cited article or passage really exists
-for the conversation and belongs to the Researcher's assigned group.
-"""
+The tests check that cited evidence exists in the conversation and belongs to
+the group assigned by the application, even when the model names another group."""
 
 import pytest
 
 from backend.agents.researcher_findings import ResearcherFindings, SourceGroup
-from backend.application.findings_validation import (
+from backend.application.evidence.findings_validation import (
     InvalidFindings,
     validate_findings,
 )
@@ -37,17 +36,15 @@ def build_findings(group: SourceGroup, article_id: str, passage_id: str):
 def test_findings_citing_real_saved_articles_of_their_group_are_accepted(
     make_article,
 ) -> None:
-    """
-    A cited article that was saved for the same group passes validation.
-    """
+    """Accept assigned evidence even if the model names a different group."""
     article = make_article("npr")
     findings = build_findings(
-        SourceGroup.LIBERAL,
+        SourceGroup.CONSERVATIVE,
         str(article.article_id),
         article.passages[0].passage_id,
     )
 
-    validate_findings(findings, (article,))
+    validate_findings(findings, (article,), assigned_group=SourceGroup.LIBERAL)
 
 
 def test_findings_citing_an_unsaved_article_are_rejected(make_article) -> None:
@@ -63,24 +60,26 @@ def test_findings_citing_an_unsaved_article_are_rejected(make_article) -> None:
     )
 
     with pytest.raises(InvalidFindings):
-        validate_findings(findings, (saved,))
+        validate_findings(findings, (saved,), assigned_group=SourceGroup.LIBERAL)
 
 
 def test_findings_citing_the_other_groups_article_are_rejected(
     make_article,
 ) -> None:
-    """
-    A liberal Researcher may not cite an article from a conservative outlet.
-    """
+    """Reject another group's article even if its group matches the model label."""
     conservative_article = make_article("fox")
     findings = build_findings(
-        SourceGroup.LIBERAL,
+        SourceGroup.CONSERVATIVE,
         str(conservative_article.article_id),
         conservative_article.passages[0].passage_id,
     )
 
     with pytest.raises(InvalidFindings):
-        validate_findings(findings, (conservative_article,))
+        validate_findings(
+            findings,
+            (conservative_article,),
+            assigned_group=SourceGroup.LIBERAL,
+        )
 
 
 def test_findings_citing_a_passage_not_in_the_cited_article_are_rejected(
@@ -98,4 +97,4 @@ def test_findings_citing_a_passage_not_in_the_cited_article_are_rejected(
     )
 
     with pytest.raises(InvalidFindings):
-        validate_findings(findings, (first, second))
+        validate_findings(findings, (first, second), assigned_group=SourceGroup.LIBERAL)

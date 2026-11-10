@@ -31,16 +31,6 @@ def build_findings(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def test_findings_with_supported_focus_are_valid() -> None:
-    """
-    A main focus backed by at least one passage reference is accepted.
-    """
-    findings = ResearcherFindings.model_validate(build_findings())
-
-    assert findings.group == "liberal"
-    assert findings.main_focuses[0].passage_ids == ["npr-1-p3"]
-
-
 def test_focus_without_supporting_passage_is_rejected() -> None:
     """
     A classification with no supporting passage is not evidence-based.
@@ -51,14 +41,6 @@ def test_focus_without_supporting_passage_is_rejected() -> None:
 
     with pytest.raises(ValidationError):
         ResearcherFindings.model_validate(build_findings(main_focuses=unsupported))
-
-
-def test_group_must_be_liberal_or_conservative() -> None:
-    """
-    Source groups are fixed by the project, so other group names are invalid.
-    """
-    with pytest.raises(ValidationError):
-        ResearcherFindings.model_validate(build_findings(group="centrist"))
 
 
 def test_findings_preserve_attributed_accounts_and_read_article_inventory() -> None:

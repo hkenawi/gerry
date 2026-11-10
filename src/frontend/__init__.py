@@ -1,4 +1,4 @@
-"""Mark the frontend source directory as required by repository conventions.
+"""Contain Gerry's browser page and its static assets.
 
-React and TypeScript own the browser application; Python does not initialize or
-serve frontend assets from this package marker."""
+The HTTP application serves these files directly. Importing this package has
+no effect on the browser or the application server."""

@@ -6,7 +6,7 @@ and the request deadline are counted for one request.
 """
 
 from backend.application.settings import Settings
-from backend.application.request_budget import BudgetResource, RequestBudget
+from backend.application.turn.request_budget import BudgetResource, RequestBudget
 
 
 class FakeClock:

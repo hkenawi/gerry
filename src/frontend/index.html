@@ -5,9 +5,55 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Compare how selected news outlets cover the same international event." />
     <title>Gerry — A wider view</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script type="module" src="/static/chat.js"></script>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/main.tsx"></script>
+    <main>
+      <header class="masthead">
+        <a class="wordmark" href="/" aria-label="Gerry home">gerry<span>.</span></a>
+        <span class="edition">More perspectives. Better context.</span>
+      </header>
+
+      <section class="introduction" aria-labelledby="purpose">
+        <p class="eyebrow">News, with room for perspective</p>
+        <h1 id="purpose">A wider view of the same story.</h1>
+        <p class="description">
+          Compare how selected liberal and conservative news outlets cover an
+          international event. See what they emphasize, where they overlap, and
+          the sources behind the comparison.
+        </p>
+      </section>
+
+      <section class="connection-panel" aria-label="Gerry availability">
+        <p role="status">
+          <span id="connection-dot" class="status-dot" aria-hidden="true"></span>
+          <span id="connection-message">Connecting to Gerry…</span>
+        </p>
+        <button id="check-connection" type="button" hidden>Try again</button>
+      </section>
+
+      <section id="chat" class="chat" aria-label="Gerry chat" hidden>
+        <div class="chat-heading">
+          <h2>Compare coverage</h2>
+          <button id="new-chat" type="button" hidden>New chat</button>
+        </div>
+        <div id="messages"></div>
+        <p id="pending-question" class="chat-question" hidden></p>
+        <p id="progress" role="status" hidden></p>
+        <p id="error" role="alert" hidden></p>
+        <button id="retry-message" type="button" hidden>Retry message</button>
+        <form id="chat-form" class="chat-form">
+          <label for="gerry-question">Your question</label>
+          <textarea
+            id="gerry-question"
+            placeholder="Name an international event and a date or time period."
+            rows="3"
+          ></textarea>
+          <button id="send-message" type="submit" disabled>Send</button>
+        </form>
+      </section>
+      <footer>A comparison of sampled reporting, with attribution and context.</footer>
+    </main>
   </body>
 </html>

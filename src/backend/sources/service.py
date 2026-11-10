@@ -68,6 +68,7 @@ class ArticleSourceService:
             raise ValueError("Search requires a query, outlet assignment, and valid dates.")
         candidates: list[ArticleCandidate] = []
         outcomes: list[SourceAccessOutcome] = []
+        outlet_id: str
         for outlet_id in dict.fromkeys(assigned_outlets):
             outlet: OutletConfiguration | None = self._outlets.get(outlet_id)
             if outlet is None:
@@ -77,39 +78,47 @@ class ArticleSourceService:
                     detail="Outlet is not in the approved roster.",
                 ))
                 continue
+            urls: tuple[str, ...]
+            scope: str
             urls, scope = build_discovery_urls(outlet, start_date, end_date, self._limits)
-            found: list[ArticleCandidate] = []
-            failures: list[SourceAccessError] = []
+            hosts: tuple[str, ...] = tuple(
+                dict.fromkeys((*outlet.feed_hosts, *outlet.article_hosts)),
+            )
+            found: dict[str, ArticleCandidate] = {}
+            last_error: SourceAccessError | None = None
+            candidate: ArticleCandidate
+            url: str
             for url in urls:
                 try:
-                    document: FetchedDocument = self._fetch(
-                        url, tuple(dict.fromkeys((*outlet.feed_hosts, *outlet.article_hosts))),
-                        self._limits,
-                    )
-                    self._validate_document(document, (*outlet.feed_hosts, *outlet.article_hosts))
-                    found.extend(parse_discovery_document(
+                    document: FetchedDocument = self._fetch(url, hosts, self._limits)
+                    self._validate_document(document, hosts)
+                    for candidate in parse_discovery_document(
                         document, outlet, query, start_date, end_date,
                         expect_feed=url in outlet.feed_urls,
-                    ))
+                    ):
+                        found[candidate.url] = candidate
                 except SourceAccessError as error:
-                    failures.append(error)
+                    last_error = error
                 except (OSError, ValueError, LxmlError):
-                    failures.append(SourceAccessError(
+                    last_error = SourceAccessError(
                         SOURCE_CONSTANTS.access_statuses.FETCH_FAILED,
                         "Discovery document could not be fetched or parsed.",
-                    ))
-            unique: dict[str, ArticleCandidate] = {candidate.url: candidate for candidate in found}
-            selected: list[ArticleCandidate] = list(unique.values())[:self._limits.max_results_per_outlet]
+                    )
+            selected: list[ArticleCandidate] = list(found.values())[
+                :self._limits.max_results_per_outlet
+            ]
             candidates.extend(selected)
-            last_error: SourceAccessError | None = failures[-1] if failures else None
-            status: SourceAccessStatus = (
-                SOURCE_CONSTANTS.access_statuses.SUCCESS if selected else
-                last_error.status if last_error else SOURCE_CONSTANTS.access_statuses.NO_RESULTS
-            )
+            status: SourceAccessStatus = SOURCE_CONSTANTS.access_statuses.NO_RESULTS
+            http_status: int | None = None
+            if selected:
+                status = SOURCE_CONSTANTS.access_statuses.SUCCESS
+            elif last_error is not None:
+                status = last_error.status
+                http_status = last_error.http_status
             outcomes.append(SourceAccessOutcome(
                 outlet_id=outlet_id, status=status,
-                http_status=last_error.http_status if last_error and not selected else None,
-                detail=scope + (" Some discovery pages failed." if failures else ""),
+                http_status=http_status,
+                detail=scope + (" Some discovery pages failed." if last_error else ""),
             ))
         return ArticleSearchResult(candidates=tuple(candidates), outcomes=tuple(outcomes))
 
@@ -125,6 +134,7 @@ class ArticleSourceService:
         """Fetch, extract, date-check, deduplicate, and save one assigned article."""
         if start_date > end_date:
             raise ValueError("Article dates must form a valid window.")
+        failure: SourceAccessError
         try:
             outlet: OutletConfiguration | None = self._outlets.get(outlet_id)
             if outlet is None or outlet_id not in assigned_outlets:
@@ -182,23 +192,27 @@ class ArticleSourceService:
                 ) from error
             return self._successful_read(article, url)
         except SourceAccessError as error:
-            return ArticleReadResult(outcome=SourceAccessOutcome(
-                outlet_id=outlet_id, url=url, status=error.status,
-                http_status=error.http_status, detail=str(error),
-            ))
+            failure = error
         except OSError:
-            return ArticleReadResult(outcome=SourceAccessOutcome(
-                outlet_id=outlet_id, url=url,
-                status=SOURCE_CONSTANTS.access_statuses.FETCH_FAILED,
-                detail="Source fetch failed.",
-            ))
+            failure = SourceAccessError(
+                SOURCE_CONSTANTS.access_statuses.FETCH_FAILED,
+                "Source fetch failed.",
+            )
         except (ValueError, LxmlError):
             logger.exception("Article extraction failed.")
-            return ArticleReadResult(outcome=SourceAccessOutcome(
-                outlet_id=outlet_id, url=url,
-                status=SOURCE_CONSTANTS.access_statuses.EXTRACTION_FAILED,
-                detail="Article text or metadata could not be validated.",
-            ))
+            failure = SourceAccessError(
+                SOURCE_CONSTANTS.access_statuses.EXTRACTION_FAILED,
+                "Article text or metadata could not be validated.",
+            )
+        return ArticleReadResult(
+            outcome=SourceAccessOutcome(
+                outlet_id=outlet_id,
+                url=url,
+                status=failure.status,
+                http_status=failure.http_status,
+                detail=str(failure),
+            ),
+        )
 
     def read_collected_article(self, conversation_id: str, article_id: UUID) -> ArticleRecord:
         """Read saved session evidence only; a missing snapshot raises KeyError."""

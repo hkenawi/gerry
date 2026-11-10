@@ -8,25 +8,35 @@ import time
 import asyncio
 import logging
 
-from fastapi import FastAPI, Request
+from pathlib import Path
 from agents import ModelSettings
 from datetime import UTC, datetime
-from collections.abc import AsyncIterator
+from fastapi import FastAPI, Request
 from agents.models.interface import Model
+from collections.abc import AsyncIterator
+from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from backend.application.settings import Settings
-from backend.application.run_turn import TurnResult, run_turn
-from backend.application.tool_call_record import ToolCallOutcome, ToolCallRecord
-from backend.application.failure_category import (
+from backend.application.turn.run_turn import TurnResult, run_turn
+from backend.interfaces.http.chat_contracts import ChatRequest, ChatResponse
+from backend.application.turn.tool_calls import ToolCallOutcome, ToolCallRecord
+from backend.application.turn.request_state import (
+    RequestState,
+    SourceGateway,
+    build_request_state,
+)
+from backend.interfaces.http.progress_event import (
+    ProgressEvent,
+    ProgressEventType,
+    format_sse_frame,
+)
+from backend.application.turn.failure_category import (
     FailureCategory,
     FailureDescription,
     describe_failure,
 )
-from backend.application.request_state import RequestState, SourceGateway, build_request_state
-from backend.interfaces.http.chat_contracts import ChatRequest, ChatResponse
-from backend.application.progress_event import ProgressEvent, ProgressEventType, format_sse_frame
 from backend.infrastructure.persistence.memory import (
     PERSISTENCE_CONSTANTS,
     InMemoryStore,
@@ -37,6 +47,7 @@ from backend.infrastructure.persistence.memory import (
 
 
 logger: logging.Logger = logging.getLogger(__name__)
+FRONTEND_DIRECTORY: Path = Path(__file__).resolve().parents[3] / "frontend"
 
 
 def respond_to_chat(
@@ -69,9 +80,15 @@ def create_http_app(
     sources: SourceGateway,
     model_settings: ModelSettings | None = None,
 ) -> FastAPI:
-    """Connect the chat routes to the shared workflow and in-memory store."""
+    """Serve the browser UI and connect chat to the shared workflow and store."""
     app: FastAPI = FastAPI(title="Gerry")
     progress: dict[str, list[ProgressEvent]] = {}
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIRECTORY / "static"))
+
+    @app.get("/", include_in_schema=False)
+    async def serve_home() -> FileResponse:
+        """Return the chat page without making a model call."""
+        return FileResponse(FRONTEND_DIRECTORY / "index.html")
 
     @app.exception_handler(RequestValidationError)
     async def reject_invalid_request(

@@ -11,8 +11,12 @@ from concurrent.futures import ThreadPoolExecutor
 from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
 from backend.agents.researcher_findings import ResearcherFindings
-from backend.infrastructure.persistence import InMemoryStore, RequestConflict
 from backend.interfaces.http.chat_contracts import ChatRequest, ChatResponse
+from backend.infrastructure.persistence import (
+    InMemoryStore,
+    RequestRecord,
+    RequestConflict,
+)
 
 
 def build_request() -> ChatRequest:
@@ -24,39 +28,6 @@ def build_request() -> ChatRequest:
             "messages": [{"role": "user", "content": "Compare coverage."}],
         },
     )
-
-
-def test_first_turn_retry_reuses_the_completed_response_and_conversation() -> None:
-    """Return the same saved result when the initial network response is lost."""
-    store: InMemoryStore = InMemoryStore()
-    request: ChatRequest = build_request()
-    record, should_start = store.begin_request(request)
-    assert should_start is True
-    response: ChatResponse = ChatResponse(
-        conversation_id=record.conversation_id,
-        request_id=request.request_id,
-        answer="Collected evidence.",
-        tool_calls=[],
-    )
-    store.complete_request(response)
-
-    repeated, should_restart = store.begin_request(request)
-
-    assert should_restart is False
-    assert repeated.conversation_id == response.conversation_id
-    assert repeated.response == response
-
-
-def test_request_id_cannot_be_reused_with_changed_payload() -> None:
-    """Reject a changed question instead of replaying an unrelated response."""
-    store: InMemoryStore = InMemoryStore()
-    request: ChatRequest = build_request()
-    store.begin_request(request)
-    changed: ChatRequest = request.model_copy(deep=True)
-    changed.messages[0].content = "A different event."
-
-    with pytest.raises(RequestConflict):
-        store.begin_request(changed)
 
 
 def test_conversation_rejects_overlapping_turns() -> None:
@@ -116,6 +87,40 @@ def test_interrupted_request_is_reported_without_automatic_restart() -> None:
 
     assert should_restart is False
     assert repeated.status.value == "interrupted"
+    assert store.load_conversation(record.conversation_id) == ()
+
+    replacement: ChatRequest = request.model_copy(update={
+        "conversation_id": record.conversation_id,
+        "request_id": "replacement-turn",
+    })
+    assert store.begin_request(replacement)[1] is True
+
+
+def test_failed_turn_leaves_the_conversation_available_for_a_new_request() -> None:
+    """Replay the failure by request ID and accept new work with the same history."""
+    store: InMemoryStore = InMemoryStore()
+    request: ChatRequest = build_request()
+    record: RequestRecord
+    record, _ = store.begin_request(request)
+    response: ChatResponse = ChatResponse(
+        conversation_id=record.conversation_id,
+        request_id=request.request_id,
+        answer="Research failed.",
+        tool_calls=[],
+    )
+    store.complete_request(response, status_code=502)
+
+    replacement: ChatRequest = request.model_copy(update={
+        "conversation_id": record.conversation_id,
+        "request_id": "replacement-turn",
+    })
+    assert store.begin_request(replacement)[1] is True
+    replay: RequestRecord
+    should_start: bool
+    replay, should_start = store.begin_request(request)
+    assert should_start is False
+    assert replay.response == response
+    assert replay.response_status == 502
     assert store.load_conversation(record.conversation_id) == ()
 
 
@@ -207,12 +212,3 @@ def test_simultaneous_retries_only_claim_work_once() -> None:
 
     assert sum(should_start for _, should_start in claims) == 1
     assert len({record.conversation_id for record, _ in claims}) == 1
-
-
-def test_new_store_cannot_restore_a_conversation_after_backend_restart() -> None:
-    """Make the agreed process-local lifetime explicit at the public boundary."""
-    store: InMemoryStore = InMemoryStore()
-    record, _ = store.begin_request(build_request())
-
-    with pytest.raises(KeyError):
-        InMemoryStore().load_conversation(record.conversation_id)

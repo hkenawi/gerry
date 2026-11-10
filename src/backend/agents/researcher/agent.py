@@ -4,22 +4,23 @@ The Researcher agent: one definition shared by both source groups.
 The prompt, tools, and output schema are identical for the liberal and
 conservative runs. Only the trusted group, window, and outlets bound into the
 tools differ, and every run starts with a fresh context holding just the
-assignment. Findings are validated against saved evidence before being kept.
-"""
+assignment. Findings are validated against saved evidence before being kept."""
 
 from pathlib import Path
-from dataclasses import dataclass
 from datetime import date
-
-from agents import Agent, ModelSettings, function_tool
+from dataclasses import dataclass
 from agents.models.interface import Model
+from agents import Agent, ModelSettings, function_tool
 
 from backend.agents.researcher.tools import GroupSourceTools
+from backend.application.turn.request_state import RequestState
+from backend.application.turn.structured_run import run_with_correction
+from backend.application.evidence.outlet_assignments import outlets_for_group
 from backend.agents.researcher_findings import SourceGroup, ResearcherFindings
-from backend.application.findings_validation import InvalidFindings, validate_findings
-from backend.application.outlet_assignments import outlets_for_group
-from backend.application.request_state import RequestState
-from backend.application.structured_run import run_with_correction
+from backend.application.evidence.findings_validation import (
+    InvalidFindings,
+    validate_findings,
+)
 
 PROMPT: str = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8")
 RESEARCHER_MAX_TURNS: int = 12
@@ -104,30 +105,27 @@ async def run_researcher(
     model: Model,
     model_settings: ModelSettings | None,
 ) -> ResearcherOutcome:
-    """
-    Run one fresh-context Researcher and return validated findings or a failure.
-    """
+    """Run one fresh-context Researcher and return validated findings or a failure."""
     tools: GroupSourceTools = GroupSourceTools(state, group, window)
     agent: Agent[RequestState] = build_researcher_agent(
         tools, group, model, model_settings
     )
-    accepted: list[ResearcherFindings] = []
 
     def validate(output: ResearcherFindings) -> str | None:
-        """
-        Force the trusted group, then check citations against saved evidence.
-        """
-        candidate: ResearcherFindings = output.model_copy(update={"group": group})
+        """Check citations against saved evidence for the trusted group."""
         try:
             validate_findings(
-                candidate, state.store.list_articles(state.conversation_id)
+                output,
+                state.store.list_articles(state.conversation_id),
+                assigned_group=group,
             )
         except InvalidFindings as error:
             return f"{error} Cite only articles you read successfully."
-        accepted.append(candidate)
         return None
 
     assignment: str = describe_assignment(group, event, window, focus_question)
+    output: ResearcherFindings | None
+    problem: str | None
     output, problem = await run_with_correction(
         agent,
         [{"role": "user", "content": assignment}],
@@ -137,4 +135,4 @@ async def run_researcher(
     )
     if output is None:
         return ResearcherOutcome(None, problem)
-    return ResearcherOutcome(accepted[-1])
+    return ResearcherOutcome(output.model_copy(update={"group": group}))

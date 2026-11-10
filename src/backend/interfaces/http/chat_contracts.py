@@ -7,12 +7,11 @@ no agent or storage logic.
 """
 
 from enum import StrEnum
-from typing import Self, ClassVar
 from dataclasses import dataclass
-
+from typing import Self, ClassVar
 from pydantic import Field, BaseModel, ConfigDict, model_validator
 
-from backend.application.tool_call_record import ToolCallRecord
+from backend.application.turn.tool_calls import ToolCallRecord
 
 
 class ChatRole(StrEnum):

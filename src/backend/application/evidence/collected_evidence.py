@@ -6,8 +6,8 @@ evidence, so it lives here rather than in either of them.
 """
 
 from backend.sources.articles import ArticleRecord
-from backend.application.request_state import RequestState
 from backend.agents.researcher_findings import SourceGroup
+from backend.application.turn.request_state import RequestState
 
 
 def collect_articles_by_group(

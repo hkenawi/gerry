@@ -4,19 +4,18 @@ Render the reader-facing Markdown answer and verify its citations.
 The Writer supplies claims tied to passage IDs; this module resolves each ID to
 a saved article, numbers the citations, builds the comparison table, and states
 limitations such as failed articles and unequal samples. Invalid citations are
-reported as problems so they can be corrected and are never shown to readers.
-"""
+reported as problems so they can be corrected and are never shown to readers."""
 
 import re
 
 from backend.sources.articles import ArticleRecord
-from backend.agents.lead.schemas import AspectAlignment, AspectTreatment, CoverageState
 from backend.sources.access import SourceAccessOutcome
-from backend.sources.constants import ArticleType, SourceAccessStatus
 from backend.agents.researcher_findings import SourceGroup
 from backend.agents.writer.schemas import Claim, WriterReport
-from backend.application.sample_assessment import AnswerMode, SampleAssessment
-from backend.application.outlet_assignments import outlet_display_name
+from backend.sources.constants import ArticleType, SourceAccessStatus
+from backend.application.evidence.outlet_assignments import outlet_display_name
+from backend.application.answer.sample_assessment import AnswerMode, SampleAssessment
+from backend.agents.lead.schemas import AspectAlignment, AspectTreatment, CoverageState
 
 COVERAGE_LABELS: dict[CoverageState, str] = {
     CoverageState.CENTRAL: "Central focus",
@@ -59,34 +58,28 @@ class CitationNumbers:
         self._articles: dict[str, ArticleRecord] = {
             str(article.article_id): article for article in articles
         }
-        self._numbers: dict[str, int] = {}
-        self._first_passages: dict[str, str] = {}
+        self._citations: dict[str, tuple[int, str]] = {}
 
     def cite(self, passage_ids: list[str]) -> str:
-        """
-        Return the numbered markers for the passages, assigning new numbers.
-        """
-        markers: list[str] = []
+        """Return the numbered markers for the passages, assigning new numbers."""
+        markers: dict[int, None] = {}
+        passage_id: str
+        number: int
         for passage_id in passage_ids:
             article_id: str = article_id_of(passage_id)
-            if article_id not in self._numbers:
-                self._numbers[article_id] = len(self._numbers) + 1
-                self._first_passages[article_id] = passage_id
-            marker: str = f"[{self._numbers[article_id]}]"
-            if marker not in markers:
-                markers.append(marker)
-        return " " + "".join(markers) if markers else ""
+            number, _ = self._citations.setdefault(
+                article_id, (len(self._citations) + 1, passage_id),
+            )
+            markers[number] = None
+        return " " + "".join(f"[{number}]" for number in markers) if markers else ""
 
     def sources(self) -> list[ArticleRecord]:
-        """
-        Return cited articles ordered by their citation number.
-        """
-        ordered: list[str] = sorted(self._numbers, key=self._numbers.__getitem__)
-        return [self._articles[article_id] for article_id in ordered]
+        """Return cited articles ordered by their citation number."""
+        return [self._articles[article_id] for article_id in self._citations]
 
     def excerpt(self, article: ArticleRecord) -> str:
         """Return a short Markdown-safe excerpt from this article's first citation."""
-        passage_id: str = self._first_passages[str(article.article_id)]
+        passage_id: str = self._citations[str(article.article_id)][1]
         for passage in article.passages:
             if passage.passage_id == passage_id:
                 words: list[str] = passage.text.split()
@@ -95,39 +88,20 @@ class CitationNumbers:
         return ""
 
 
-def collect_passage_ids(
-    report: WriterReport,
-    alignment: list[AspectAlignment],
-) -> list[str]:
-    """
-    List every passage ID cited by the report and the alignment table.
-    """
-    claims: list[Claim] = [*report.summary, *report.overlap, *report.differences]
-    passage_ids: list[str] = [
-        passage_id for claim in claims for passage_id in claim.passage_ids
-    ]
-    for row in alignment:
-        passage_ids.extend(row.liberal.passage_ids)
-        passage_ids.extend(row.conservative.passage_ids)
-    return passage_ids
-
-
 def find_report_problems(
     report: WriterReport,
-    alignment: list[AspectAlignment],
-    articles: tuple[ArticleRecord, ...],
+    known_passage_ids: set[str],
     assessment: SampleAssessment,
 ) -> list[str]:
-    """
-    List reasons the report cannot be shown, for a correction attempt.
-    """
-    known: set[str] = {
-        passage.passage_id for article in articles for passage in article.passages
-    }
+    """Check the Writer's claims against the evidence and answer mode."""
+    claims: list[Claim] = [*report.summary, *report.overlap, *report.differences]
+    cited_passage_ids: dict[str, None] = dict.fromkeys(
+        passage_id for claim in claims for passage_id in claim.passage_ids
+    )
     problems: list[str] = [
         f"Passage ID {passage_id!r} does not exist in the collected articles."
-        for passage_id in dict.fromkeys(collect_passage_ids(report, alignment))
-        if passage_id not in known
+        for passage_id in cited_passage_ids
+        if passage_id not in known_passage_ids
     ]
     if assessment.mode is not AnswerMode.COMPARISON and (
         report.overlap or report.differences
@@ -141,22 +115,16 @@ def find_report_problems(
 
 def find_alignment_problems(
     alignment: list[AspectAlignment],
-    articles_by_group: dict[SourceGroup, tuple[ArticleRecord, ...]],
+    passage_ids_by_group: dict[SourceGroup, set[str]],
 ) -> list[str]:
-    """
-    List alignment citations that do not belong to the group they describe.
-    """
+    """Check that table citations belong to the groups they describe."""
     problems: list[str] = []
     for row in alignment:
         for group, treatment in (
             (SourceGroup.LIBERAL, row.liberal),
             (SourceGroup.CONSERVATIVE, row.conservative),
         ):
-            allowed: set[str] = {
-                passage.passage_id
-                for article in articles_by_group[group]
-                for passage in article.passages
-            }
+            allowed: set[str] = passage_ids_by_group[group]
             problems.extend(
                 f"Aspect {row.aspect!r} cites passage {passage_id!r}, which is "
                 f"not from a {group.value} article you were given."

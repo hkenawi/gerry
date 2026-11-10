@@ -5,10 +5,10 @@ claimed request. State is deliberately lost when the backend process exits."""
 
 from enum import StrEnum
 from copy import deepcopy
-from uuid import UUID, uuid4
-from _thread import LockType
 from threading import Lock
-from dataclasses import dataclass, replace
+from _thread import LockType
+from uuid import UUID, uuid4
+from dataclasses import dataclass, field, replace
 
 from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
@@ -54,6 +54,16 @@ class RequestRecord:
     response_status: int = 200
 
 
+@dataclass
+class _ConversationState:
+    """Group the transcript, evidence, and active turn for one conversation."""
+
+    history: tuple[ChatMessage, ...] = ()
+    articles: dict[UUID, ArticleRecord] = field(default_factory=dict)
+    research: tuple[ResearchBrief, tuple[ResearcherFindings, ...]] | None = None
+    active_request_id: str | None = None
+
+
 class InMemoryStore:
     """Own authoritative state for one backend process without external services."""
 
@@ -61,11 +71,7 @@ class InMemoryStore:
         """Create empty state and the lock used to claim and finish turns."""
         self._lock: LockType = Lock()
         self._requests: dict[str, RequestRecord] = {}
-        self._conversations: dict[str, tuple[ChatMessage, ...]] = {}
-        self._articles: dict[str, dict[UUID, ArticleRecord]] = {}
-        self._research: dict[
-            str, tuple[ResearchBrief, tuple[ResearcherFindings, ...]]
-        ] = {}
+        self._conversations: dict[str, _ConversationState] = {}
 
     def begin_request(self, request: ChatRequest) -> tuple[RequestRecord, bool]:
         """Return a request record and whether the caller owns new work."""
@@ -76,30 +82,29 @@ class InMemoryStore:
                     raise RequestConflict("Request ID was used with another payload.")
                 return deepcopy(existing), False
             conversation_id: str = request.conversation_id or str(uuid4())
-            history: tuple[ChatMessage, ...] = (
+            conversation: _ConversationState = (
                 self._conversations[conversation_id]
-                if request.conversation_id is not None else ()
+                if request.conversation_id is not None
+                else _ConversationState()
             )
-            if tuple(request.messages[:-1]) != history:
+            if tuple(request.messages[:-1]) != conversation.history:
                 raise RequestConflict("Submitted history does not match saved history.")
-            if any(
-                record.conversation_id == conversation_id
-                and record.status is PERSISTENCE_CONSTANTS.statuses.RUNNING
-                for record in self._requests.values()
-            ):
+            if conversation.active_request_id is not None:
                 raise RequestConflict("Another turn is running in this conversation.")
-            self._conversations.setdefault(conversation_id, ())
-            self._articles.setdefault(conversation_id, {})
             record: RequestRecord = RequestRecord(
-                request=deepcopy(request), conversation_id=conversation_id,
+                request=deepcopy(request),
+                conversation_id=conversation_id,
             )
+            claimed: RequestRecord = deepcopy(record)
+            self._conversations[conversation_id] = conversation
+            conversation.active_request_id = request.request_id
             self._requests[request.request_id] = record
-            return deepcopy(record), True
+            return claimed, True
 
     def load_conversation(self, conversation_id: str) -> tuple[ChatMessage, ...]:
         """Return a detached visible history or raise KeyError if state is gone."""
         with self._lock:
-            return deepcopy(self._conversations[conversation_id])
+            return deepcopy(self._conversations[conversation_id].history)
 
     def interrupt_request(self, request_id: str) -> None:
         """Mark cancelled work explicitly without modifying completed messages."""
@@ -110,6 +115,7 @@ class InMemoryStore:
             self._requests[request_id] = replace(
                 record, status=PERSISTENCE_CONSTANTS.statuses.INTERRUPTED,
             )
+            self._conversations[record.conversation_id].active_request_id = None
 
     def request_status(self, request_id: str) -> RequestStatus | None:
         """Read lifecycle status without copying the request or its answer."""
@@ -125,24 +131,27 @@ class InMemoryStore:
                 raise RequestConflict("Only a running request can be completed.")
             if record.conversation_id != response.conversation_id:
                 raise RequestConflict("Response belongs to another conversation.")
-            if status_code < 400:
-                self._conversations[record.conversation_id] += (
-                    deepcopy(record.request.messages[-1]),
-                    ChatMessage(role=CHAT_CONSTANTS.roles.ASSISTANT, content=response.answer),
-                )
-            self._requests[response.request_id] = replace(
+            conversation: _ConversationState = self._conversations[record.conversation_id]
+            completed: RequestRecord = replace(
                 record,
                 status=PERSISTENCE_CONSTANTS.statuses.COMPLETED,
                 response=deepcopy(response),
                 response_status=status_code,
             )
+            if status_code < 400:
+                conversation.history += (
+                    deepcopy(record.request.messages[-1]),
+                    ChatMessage(role=CHAT_CONSTANTS.roles.ASSISTANT, content=response.answer),
+                )
+            self._requests[response.request_id] = completed
+            conversation.active_request_id = None
 
     def save_article(
         self, conversation_id: str, article: ArticleRecord,
     ) -> ArticleRecord:
         """Save immutable evidence for an existing conversation and return it."""
         with self._lock:
-            articles: dict[UUID, ArticleRecord] = self._articles[conversation_id]
+            articles: dict[UUID, ArticleRecord] = self._conversations[conversation_id].articles
             existing: ArticleRecord | None = articles.get(article.article_id)
             if existing is not None and existing != article:
                 raise RequestConflict("A saved snapshot cannot be overwritten.")
@@ -167,12 +176,12 @@ class InMemoryStore:
     def load_article(self, conversation_id: str, article_id: UUID) -> ArticleRecord:
         """Read authorized collected evidence without contacting a source."""
         with self._lock:
-            return self._articles[conversation_id][article_id]
+            return self._conversations[conversation_id].articles[article_id]
 
     def list_articles(self, conversation_id: str) -> tuple[ArticleRecord, ...]:
         """List immutable snapshots collected in this conversation only."""
         with self._lock:
-            return tuple(self._articles[conversation_id].values())
+            return tuple(self._conversations[conversation_id].articles.values())
 
     def save_research(
         self,
@@ -182,13 +191,17 @@ class InMemoryStore:
     ) -> None:
         """Save a detached research brief and findings for an existing session."""
         with self._lock:
-            if conversation_id not in self._conversations:
-                raise KeyError(conversation_id)
-            self._research[conversation_id] = deepcopy((brief, findings))
+            conversation: _ConversationState = self._conversations[conversation_id]
+            conversation.research = deepcopy((brief, findings))
 
     def load_research(
         self, conversation_id: str,
     ) -> tuple[ResearchBrief, tuple[ResearcherFindings, ...]]:
         """Return detached research state without permitting mutation of storage."""
         with self._lock:
-            return deepcopy(self._research[conversation_id])
+            research: tuple[ResearchBrief, tuple[ResearcherFindings, ...]] | None = (
+                self._conversations[conversation_id].research
+            )
+            if research is None:
+                raise KeyError(conversation_id)
+            return deepcopy(research)

@@ -8,20 +8,20 @@ answer from its claims and verifies every citation.
 """
 
 import json
+
 from uuid import UUID
 from pathlib import Path
-
-from agents import Agent, ModelSettings, RunContextWrapper, function_tool
 from agents.models.interface import Model
+from agents import Agent, ModelSettings, RunContextWrapper, function_tool
 
-from backend.agents.research_brief import ResearchBrief
-from backend.agents.lead.schemas import AspectAlignment
-from backend.agents.researcher_findings import ResearcherFindings
-from backend.agents.writer.schemas import WriterReport
-from backend.application.request_state import RequestState
-from backend.application.sample_assessment import SampleAssessment
-from backend.application.tool_call_record import ToolCallOutcome
 from backend.sources.articles import ArticleRecord
+from backend.agents.writer.schemas import WriterReport
+from backend.agents.lead.schemas import AspectAlignment
+from backend.agents.research_brief import ResearchBrief
+from backend.application.turn.request_state import RequestState
+from backend.application.turn.tool_calls import ToolCallOutcome
+from backend.agents.researcher_findings import ResearcherFindings
+from backend.application.answer.sample_assessment import SampleAssessment
 
 PROMPT: str = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8")
 WRITER_AGENT_NAME: str = "writer"

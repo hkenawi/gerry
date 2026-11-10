@@ -39,18 +39,10 @@ def test_search_preserves_candidates_alongside_per_outlet_failures() -> None:
     )
 
     assert restored.candidates[0].outlet_id == "npr"
+    assert type(restored.candidates[0].published_at) is date
     assert restored.outcomes[1].status == "access_denied"
     assert restored.outcomes[1].http_status == 403
     assert "article_id" not in restored.candidates[0].model_dump()
-
-
-def test_discovery_preserves_date_only_publication_precision() -> None:
-    """Keep discovery dates consistent with the saved-article date contract."""
-    result: ArticleSearchResult = ArticleSearchResult.model_validate(
-        build_search_payload(),
-    )
-
-    assert type(result.candidates[0].published_at) is date
 
 
 @pytest.mark.parametrize(

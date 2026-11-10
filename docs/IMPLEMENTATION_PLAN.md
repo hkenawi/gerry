@@ -246,8 +246,8 @@ application and closes gaps; it is not permission to postpone error handling.
 
 ### Work
 
-- Build React assets and package them with the Python backend in one deployable
-  application image.
+- Package the HTML, CSS, and JavaScript assets with the FastAPI application in
+  one deployable image.
 - Configure the service's port, startup/health behavior, runtime configuration,
   secrets, external storage permissions, timeouts, and bounded concurrency.
 - Confirm that persisted state is available across instances and deployments.
@@ -314,9 +314,9 @@ build against controlled substitutes until the other side is ready.
 | `src/backend/interfaces/http/` | Owns `/chat`, progress transport, validation, and error mapping | Consumes API contracts from the frontend |
 | `src/backend/sources/` | Consumes public interfaces | Owns roster, discovery, retrieval, extraction, article records, and passages |
 | `src/backend/infrastructure/persistence/` | Defines application storage requirements in coordination | Owns concrete adapters and storage implementation |
-| `src/frontend/` | Reviews workflow behavior | Owns React, TypeScript, table, evidence expansion, progress, and errors |
-| Tests | Owns tests for agents/application/API | Owns tests for sources/storage/frontend |
-| Deployment configuration | Owns backend/image/Cloud Run wiring | Owns frontend build inputs; reviews deployed UI |
+| `src/frontend/` | Reviews workflow behavior | Owns browser assets, tables, evidence expansion, progress, and errors |
+| Tests | Owns tests for agents/application/API | Owns tests for sources/storage and browser smoke checks |
+| Deployment configuration | Owns backend/image/Cloud Run wiring | Reviews deployed UI |
 
 This split gives each component one primary editor. It is not a rule that Person B
 must complete all source and UI work simultaneously. Schedule the work below to

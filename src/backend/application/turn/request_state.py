@@ -3,24 +3,23 @@ Trusted per-request state shared by the Lead, Researchers, and Writer.
 
 This object is passed as the agents' run context. Models never see or edit it:
 the budget, conversation identity, event window, and evidence logs all live here
-so limits are enforced by code rather than by prompts.
-"""
+so limits are enforced by code rather than by prompts."""
 
 import time
 import asyncio
+
 from uuid import UUID
 from datetime import date
 from typing import Callable, Protocol
 from dataclasses import field, dataclass
 
-from backend.sources.articles import ArticleRecord
 from backend.application.settings import Settings
-from backend.infrastructure.persistence import InMemoryStore
-from backend.application.request_budget import RequestBudget
+from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
+from backend.infrastructure.persistence import InMemoryStore
+from backend.application.turn.request_budget import RequestBudget
 from backend.agents.researcher_findings import SourceGroup, ResearcherFindings
-from backend.application.tool_call_recorder import ToolCallRecorder
-from backend.application.tool_call_record import ToolCallRecord
+from backend.application.turn.tool_calls import ToolCallRecord, ToolCallRecorder
 from backend.sources.access import (
     ArticleReadResult,
     ArticleSearchResult,
@@ -80,7 +79,6 @@ class RequestState:
     sources: SourceGateway
     recorder: ToolCallRecorder
     failed_reads: list[SourceAccessOutcome] = field(default_factory=list)
-    window: tuple[date, date] | None = None
     brief: ResearchBrief | None = None
     final_answer: str | None = None
     writer_calls: int = 0
@@ -136,7 +134,6 @@ def build_request_state(
     if brief.start_date is not None and brief.end_date is not None:
         state.reusing_research = True
         state.brief = brief
-        state.window = (brief.start_date, brief.end_date)
         for item in findings:
             state.findings[item.group].append(item)
     return state

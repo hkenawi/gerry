@@ -10,16 +10,16 @@ from threading import Barrier
 from xml.sax.saxutils import escape
 from concurrent.futures import ThreadPoolExecutor
 
-from backend.sources.service import ArticleSourceService
-from backend.sources.articles import ArticleRecord
-from backend.application.run_turn import TurnResult, run_turn
 from backend.application.settings import Settings
-from backend.application.request_state import RequestState, build_request_state
-from backend.sources.access import ArticleReadResult, ArticleSearchResult
+from backend.sources.articles import ArticleRecord
+from backend.sources.service import ArticleSourceService
 from backend.infrastructure.persistence import InMemoryStore
-from backend.interfaces.http.chat_contracts import ChatMessage, ChatRequest
+from backend.application.turn.run_turn import TurnResult, run_turn
 from backend.sources.access.http import FetchedDocument, SourceLimits
+from backend.sources.access import ArticleReadResult, ArticleSearchResult
+from backend.interfaces.http.chat_contracts import ChatMessage, ChatRequest
 from support.scripted_model import FinalOutput, ModelCall, ScriptedModel, ToolCalls
+from backend.application.turn.request_state import RequestState, build_request_state
 
 
 ARTICLE_URL: str = "https://www.npr.org/story"
@@ -152,25 +152,6 @@ def fetch_article(
     return FetchedDocument(url, ARTICLE_HTML, "text/html")
 
 
-def test_article_read_saves_passages_and_reuses_collected_evidence() -> None:
-    """Read full text once and recover the same snapshot using saved evidence only."""
-    store, conversation_id = build_store()
-    service: ArticleSourceService = ArticleSourceService(store, fetcher=fetch_article)
-
-    result = service.read_article(
-        ARTICLE_URL, "npr", conversation_id,
-        date(2026, 11, 7), date(2026, 11, 8), ("npr",),
-    )
-
-    assert result.outcome.status.value == "success"
-    assert result.article is not None
-    assert result.article.bylines == ("Example Reporter",)
-    assert result.article.passages[0].passage_id.endswith(":p0001")
-    assert service.read_collected_article(
-        conversation_id, result.article.article_id,
-    ) == result.article
-
-
 @pytest.mark.parametrize(
     "url, outlet_id, assigned, expected",
     [
@@ -293,6 +274,11 @@ def test_same_article_is_reused_without_another_fetch() -> None:
         date(2026, 11, 7), date(2026, 11, 8), ("npr",),
     )
     assert first.article is not None
+    assert first.article.bylines == ("Example Reporter",)
+    assert first.article.passages[0].passage_id.endswith(":p0001")
+    assert service.read_collected_article(
+        conversation_id, first.article.article_id,
+    ) == first.article
     assert second.article == first.article
     assert len(calls) == 1
 

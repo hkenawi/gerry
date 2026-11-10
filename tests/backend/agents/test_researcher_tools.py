@@ -1,16 +1,24 @@
 """
 Behavior tests for the trusted source tools a Researcher may call.
 
-Outlet assignment, the date window, the shared budget, and retries are all
-enforced in code; the model supplies only a query or a URL.
-"""
+The tests exercise the outlet assignment, publication window, shared budget,
+and retries enforced for the model's search and article-read calls."""
 
 from datetime import date
+from collections.abc import Callable
 
+from backend.application.settings import Settings
+from backend.sources.constants import SourceAccessStatus
+from backend.sources.service import ArticleSourceService
 from backend.agents.researcher_findings import SourceGroup
 from backend.agents.researcher.tools import GroupSourceTools
-from backend.sources.access import ArticleReadResult, SourceAccessOutcome
-from backend.application.settings import Settings
+from backend.application.turn.request_state import RequestState
+from backend.application.turn.tool_calls import ToolCallOutcome
+from backend.sources.access import (
+    ArticleReadResult,
+    SourceAccessOutcome,
+    ArticleSearchResult,
+)
 
 WINDOW: tuple[date, date] = (date(2026, 11, 1), date(2026, 11, 7))
 NPR_URL: str = "https://npr.example/a"
@@ -79,6 +87,29 @@ async def test_search_with_spent_budget_does_not_call_the_source(
 
     assert len(fake_sources.search_calls) == 1
     assert result.outcomes[0].status == "budget_exhausted"
+
+
+async def test_invalid_search_reports_failure_for_each_assigned_outlet(
+    make_state: Callable[[], RequestState],
+) -> None:
+    """Report a rejected query to the Researcher and log one failed search."""
+    state: RequestState = make_state()
+    state.sources = ArticleSourceService(state.store)
+
+    result: ArticleSearchResult = await build_tools(state).search_articles(" ")
+
+    assert result.candidates == ()
+    assert tuple(outcome.outlet_id for outcome in result.outcomes) == (
+        "npr", "nbc", "huffpost", "abc", "cbs",
+    )
+    assert {outcome.status for outcome in result.outcomes} == {
+        SourceAccessStatus.FETCH_FAILED,
+    }
+    assert {outcome.detail for outcome in result.outcomes} == {
+        "The search request was not valid.",
+    }
+    assert len(state.recorder.records) == 1
+    assert state.recorder.records[0].outcome is ToolCallOutcome.FAILURE
 
 
 async def test_read_outside_the_groups_outlets_is_refused_without_a_call(

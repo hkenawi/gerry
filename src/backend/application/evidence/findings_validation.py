@@ -3,15 +3,15 @@ Validate Researcher findings against the evidence actually saved.
 
 A Researcher may only cite articles that were read and saved for the current
 conversation, that belong to its assigned group, and passages that belong to the
-cited article. This is checked in code rather than trusted to the prompt.
-"""
+cited article. The caller supplies the group independently of the model output."""
 
 from backend.sources.articles import ArticleRecord
-from backend.application.outlet_assignments import group_for_outlet
+from backend.application.evidence.outlet_assignments import group_for_outlet
 from backend.agents.researcher_findings import (
     MainFocus,
-    ResearcherFindings,
+    SourceGroup,
     AttributedAccount,
+    ResearcherFindings,
 )
 
 
@@ -24,10 +24,10 @@ class InvalidFindings(ValueError):
 def validate_findings(
     findings: ResearcherFindings,
     saved_articles: tuple[ArticleRecord, ...],
+    *,
+    assigned_group: SourceGroup,
 ) -> None:
-    """
-    Reject findings that cite unsaved articles, other groups, or foreign passages.
-    """
+    """Reject citations outside the saved evidence for the assigned group."""
     saved: dict[str, ArticleRecord] = {
         str(article.article_id): article for article in saved_articles
     }
@@ -35,7 +35,7 @@ def validate_findings(
         article: ArticleRecord | None = saved.get(article_id)
         if article is None:
             raise InvalidFindings("Findings cite an article that was never saved.")
-        if group_for_outlet(article.outlet_id) is not findings.group:
+        if group_for_outlet(article.outlet_id) is not assigned_group:
             raise InvalidFindings("Findings cite an article from the other group.")
     references: list[MainFocus | AttributedAccount] = [
         *findings.main_focuses,

@@ -1,9 +1,8 @@
 """
 Progress events published while a turn runs, and their SSE text encoding.
 
-Progress events are separate from the final chat response; they only report
-work that actually happened.
-"""
+The chat progress route uses these events to report work as it happens over
+Server-Sent Events, independently of the final chat response."""
 
 from enum import StrEnum
 from datetime import datetime

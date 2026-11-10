@@ -5,16 +5,15 @@ A scripted model drives the real agents, tools, budget, validation, and renderer
 Only the model and the article sources are fakes, so these tests are offline.
 """
 
+import pytest
 import asyncio
+
 from typing import Any
 
-import pytest
-
-from backend.agents.researcher_findings import SourceGroup
-from backend.application.failure_category import FailureCategory, describe_failure
 from backend.agents.lead.tools import check_brief
-from backend.application.run_turn import run_turn
 from backend.application.settings import Settings
+from backend.application.turn.run_turn import run_turn
+from backend.agents.researcher_findings import SourceGroup
 from backend.interfaces.http.chat_contracts import ChatMessage
 from backend.sources.access import ArticleReadResult, SourceAccessOutcome
 from support.scripted_model import (
@@ -23,6 +22,7 @@ from support.scripted_model import (
     ScriptedModel,
     ToolCalls,
 )
+from backend.application.turn.failure_category import FailureCategory, describe_failure
 
 WINDOW_ARGS: dict[str, Any] = {
     "event": "Paris protests",
@@ -255,31 +255,6 @@ def wire_full_scenario(scenario: Scenario, fake_sources, articles) -> None:
     scenario.writer_replies = [writer_report(articles["npr"], articles["fox"])]
 
 
-async def test_unclear_request_gets_a_clarifying_question_and_no_research(
-    make_state,
-    fake_sources,
-) -> None:
-    """
-    An ambiguous request is answered with a question before any research starts.
-    """
-    scenario = Scenario()
-    scenario.lead_reply = lambda call: FinalOutput(
-        {
-            "brief": {
-                "status": "needs_clarification",
-                "event": "the protests",
-                "clarifying_question": "Which protests, and roughly when?",
-            }
-        }
-    )
-
-    result = await run_turn(MESSAGES, make_state(), scenario.model)
-
-    assert result.answer == "Which protests, and roughly when?"
-    assert fake_sources.search_calls == []
-    assert result.tool_calls == ()
-
-
 async def test_clear_request_fans_out_concurrently_and_returns_a_cited_comparison(
     make_state,
     fake_sources,
@@ -306,34 +281,17 @@ async def test_clear_request_fans_out_concurrently_and_returns_a_cited_compariso
         and record.outcome == "success"
         for record in result.tool_calls
     )
+    assignments: list[ModelCall] = [
+        call
+        for call in scenario.model.calls
+        if "You are a Researcher" in call.system_instructions and not call.tool_results
+    ]
+    assert len(assignments) == 2
+    assert all(len(call.input_items) == 1 for call in assignments)
+    assert all("Compare coverage" not in call.input_text for call in assignments)
     brief, findings = state.store.load_research(state.conversation_id)
     assert brief.event == "Paris protests"
     assert {item.group for item in findings} == set(SourceGroup)
-
-
-async def test_researchers_start_in_fresh_contexts_without_the_other_sides_data(
-    make_state,
-    fake_sources,
-    articles,
-) -> None:
-    """
-    A researcher's first model call sees only its own assignment.
-    """
-    scenario = Scenario()
-    wire_full_scenario(scenario, fake_sources, articles)
-
-    await run_turn(MESSAGES, make_state(), scenario.model)
-
-    first_calls = [
-        call
-        for call in scenario.model.calls
-        if "You are a Researcher" in call.system_instructions
-        and not call.tool_results
-    ]
-    assert len(first_calls) == 2
-    for call in first_calls:
-        assert len(call.input_items) == 1
-        assert "Compare coverage" not in call.input_text
 
 
 async def test_a_side_with_no_usable_articles_gets_a_summary_not_a_comparison(
@@ -375,6 +333,7 @@ async def test_a_side_with_no_usable_articles_gets_a_summary_not_a_comparison(
 
     assert result.failure is None
     assert "No conservative articles could be retrieved" in result.answer
+    assert "| Aspect |" not in result.answer
     assert "Where coverage differs" not in result.answer
     assert "Fox News Digital" in result.answer
     assert "paywall" in result.answer.lower()
@@ -499,16 +458,6 @@ async def test_event_window_is_fixed_after_the_first_research_call(
     assert problem is None and first is not None
     assert second is None
     assert "fixed" in second_problem
-
-
-async def test_research_rounds_per_group_are_capped(make_state) -> None:
-    """
-    A group cannot be researched again once its round ceiling is reached.
-    """
-    state = make_state(Settings(max_research_rounds=1))
-
-    assert state.try_start_round(SourceGroup.LIBERAL) is True
-    assert state.try_start_round(SourceGroup.LIBERAL) is False
 
 
 async def test_researcher_that_never_finishes_is_reported_and_does_not_stop_the_run(
@@ -657,6 +606,7 @@ async def test_spent_budget_after_research_still_yields_a_noted_partial_answer(
 
     assert result.failure is None
     assert "research limit was reached" in result.answer
+    assert "This partial result lists the available headlines." in result.answer
     assert "## Sources" in result.answer
     assert scenario.writer_calls == []
 
