@@ -9,7 +9,6 @@ import logging
 
 from uuid import UUID
 from typing import TypeAlias
-from lxml.etree import LxmlError
 from datetime import date, datetime
 from collections.abc import Callable
 
@@ -99,7 +98,8 @@ class ArticleSourceService:
                         found[candidate.url] = candidate
                 except SourceAccessError as error:
                     last_error = error
-                except (OSError, ValueError, LxmlError):
+                except Exception:
+                    logger.exception("Discovery failed for %s.", outlet_id)
                     last_error = SourceAccessError(
                         SOURCE_CONSTANTS.access_statuses.FETCH_FAILED,
                         "Discovery document could not be fetched or parsed.",
@@ -198,7 +198,7 @@ class ArticleSourceService:
                 SOURCE_CONSTANTS.access_statuses.FETCH_FAILED,
                 "Source fetch failed.",
             )
-        except (ValueError, LxmlError):
+        except Exception:
             logger.exception("Article extraction failed.")
             failure = SourceAccessError(
                 SOURCE_CONSTANTS.access_statuses.EXTRACTION_FAILED,

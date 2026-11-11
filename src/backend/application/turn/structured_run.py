@@ -5,12 +5,15 @@ Every agent run in the application goes through here so that model-call
 budgets, tracing configuration, and the single bounded correction attempt are
 applied consistently and in code rather than left to prompts."""
 
+import logging
+
 from typing import cast
 from collections.abc import Callable
 from agents.exceptions import ModelBehaviorError
 from agents import (
     Agent,
     Runner,
+    ModelResponse,
     RunHooks,
     RunConfig,
     RunResult,
@@ -21,6 +24,7 @@ from agents import (
 from backend.application.turn.request_state import RequestState
 from backend.application.turn.request_budget import BudgetResource
 
+logger: logging.Logger = logging.getLogger(__name__)
 RUN_CONFIG: RunConfig = RunConfig(tracing_disabled=True)
 MAXIMUM_ATTEMPTS: int = 2
 
@@ -49,6 +53,17 @@ class BudgetHooks(RunHooks[RequestState]):
         state: RequestState = context.context
         if not state.budget.try_consume(BudgetResource.MODEL_CALLS):
             raise BudgetExceeded("The model-call budget for this request is used up.")
+
+    async def on_llm_end(
+        self,
+        context: RunContextWrapper[RequestState],
+        agent: Agent[RequestState],
+        response: ModelResponse,
+    ) -> None:
+        """Log which agent made the call and its reported token usage."""
+        logger.info(
+            "Model call by %s used %d tokens.", agent.name, response.usage.total_tokens,
+        )
 
 
 async def run_with_correction[Output](

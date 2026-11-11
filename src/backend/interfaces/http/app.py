@@ -156,6 +156,7 @@ def create_http_app(
             )
             publish(ProgressEventType.TOOL_FINISHED, call.agent, message)
 
+        started: float = time.monotonic()
         state: RequestState | None = None
         try:
             state = build_request_state(
@@ -183,6 +184,15 @@ def create_http_app(
         response: ChatResponse = ChatResponse(
             conversation_id=record.conversation_id, request_id=request.request_id,
             answer=result.answer, tool_calls=list(result.tool_calls),
+        )
+        logger.info(
+            "Chat request %r in conversation %r finished: status=%d failure=%s "
+            "tool_calls=%d failed_tool_calls=%d seconds=%.2f.",
+            request.request_id, record.conversation_id, status_code,
+            result.failure.value if result.failure else "none",
+            len(result.tool_calls),
+            sum(call.outcome is ToolCallOutcome.FAILURE for call in result.tool_calls),
+            time.monotonic() - started,
         )
         publish(ProgressEventType.AGENT_FINISHED, "lead", "Finished reviewing your request.")
         try:

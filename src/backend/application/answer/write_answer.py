@@ -6,6 +6,7 @@ saved articles, check the Lead's alignment and the Writer's claims, and store
 the rendered Markdown in the request state."""
 
 import json
+import logging
 
 from agents import ModelSettings
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from backend.application.answer.answer_rendering import (
     render_no_evidence_answer,
 )
 
+logger: logging.Logger = logging.getLogger(__name__)
 MAX_WRITER_CALLS: int = 2
 
 
@@ -122,6 +124,9 @@ async def write_answer(
         )
     except MaxTurnsExceeded:
         return refuse("The Writer ran out of steps before finishing.")
+    except Exception as error:
+        logger.error("The Writer failed (%s).", type(error).__name__)
+        return refuse("The Writer could not finish because of an error.")
     if report is None:
         return refuse(problem or "The Writer could not produce a valid answer.")
     if report.evidence_gap:

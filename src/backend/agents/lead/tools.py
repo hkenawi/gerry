@@ -7,6 +7,7 @@ later calls must reuse it. The tools use the active run's context to record
 outcomes and save validated findings and answers."""
 
 import json
+import logging
 
 from datetime import date
 from pydantic import ValidationError
@@ -23,6 +24,7 @@ from backend.agents.research_brief import BriefStatus, ResearchBrief
 from backend.agents.researcher.agent import ResearcherOutcome, run_researcher
 from backend.application.answer.write_answer import WriteResult, write_answer
 
+logger: logging.Logger = logging.getLogger(__name__)
 LEAD_AGENT_NAME: str = "lead"
 WRITE_TOOL_NAME: str = "write_answer"
 RESEARCH_TOOL_NAMES: dict[SourceGroup, str] = {
@@ -88,26 +90,30 @@ async def research_group(
     if not state.try_start_round(group):
         return reject_research("The research-round limit for this group has been reached.")
 
+    brief: ResearchBrief | None = state.brief
+    assert brief is not None
     try:
         async with state.research_slots:
             outcome: ResearcherOutcome = await run_researcher(
                 state, group, window, event, focus_question, model, model_settings,
             )
+        if outcome.findings is not None:
+            state.store.save_research(
+                state.conversation_id,
+                brief,
+                (*(item for items in state.findings.values() for item in items), outcome.findings),
+            )
     except BudgetExceeded:
         return reject_research("The research limit was reached before this group finished.")
     except MaxTurnsExceeded:
         return reject_research("The researcher ran out of steps before finishing.")
+    except Exception as error:
+        logger.error("Research for %s failed (%s).", group.value, type(error).__name__)
+        return reject_research("This group's research could not be completed.")
     if outcome.failure is not None or outcome.findings is None:
         return reject_research(outcome.failure)
 
-    brief: ResearchBrief | None = state.brief
-    assert brief is not None
     state.findings[group].append(outcome.findings)
-    state.store.save_research(
-        state.conversation_id,
-        brief,
-        tuple(item for items in state.findings.values() for item in items),
-    )
     state.recorder.record(LEAD_AGENT_NAME, tool_name, ToolCallOutcome.SUCCESS)
     return json.dumps(
         {"status": "ok", "findings": outcome.findings.model_dump(mode="json")}

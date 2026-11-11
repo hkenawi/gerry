@@ -5,9 +5,11 @@ No real server, network, or model provider is involved.
 """
 
 import json
+import httpx
 import pytest
 import asyncio
 
+from openai import APIConnectionError
 from collections.abc import Callable
 from httpx import Response, AsyncClient, ASGITransport
 
@@ -274,3 +276,95 @@ async def test_chat_follow_up_can_reuse_saved_research(
     assert article.canonical_url in response.json()["answer"]
     assert "Paragraph 1" in response.json()["answer"]
     assert [call["tool"] for call in response.json()["tool_calls"]] == ["write_answer"]
+
+
+async def test_model_outage_returns_a_retryable_503_that_is_replayed_and_not_stored() -> None:
+    """A provider outage keeps the four-field envelope, replays, and leaves history alone."""
+    def outage(call: ModelCall) -> FinalOutput:
+        """Fail like an unreachable model provider."""
+        raise APIConnectionError(request=httpx.Request("POST", "https://model.example"))
+
+    model: ScriptedModel = ScriptedModel(outage)
+    app = build_app(Settings(), model)
+    payload: dict[str, object] = {
+        "conversation_id": None, "request_id": "outage",
+        "messages": [{"role": "user", "content": "Compare coverage."}],
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first: Response = await client.post("/chat", json=payload)
+        retry: Response = await client.post("/chat", json=payload)
+
+    assert first.status_code == retry.status_code == 503
+    assert first.json() == retry.json()
+    assert set(first.json()) == {"conversation_id", "request_id", "answer", "tool_calls"}
+    assert "language model is unavailable" in first.json()["answer"]
+    assert "Traceback" not in first.text
+    assert app.state.store.load_conversation(first.json()["conversation_id"]) == ()
+    assert len(model.calls) == 1
+
+
+async def test_each_turn_logs_identifiers_outcome_and_timing(caplog) -> None:
+    """A completed turn leaves one log line an operator can trace by request ID."""
+    caplog.set_level("INFO")
+    async with build_client() as client:
+        response: Response = await client.post("/chat", json={
+            "conversation_id": None, "request_id": "trace-me",
+            "messages": [{"role": "user", "content": "Compare coverage."}],
+        })
+
+    line: str = next(r.getMessage() for r in caplog.records if "trace-me" in r.getMessage())
+    assert response.json()["conversation_id"] in line
+    assert "status=200" in line and "failure=none" in line
+    assert "tool_calls=" in line and "seconds=" in line
+    assert "Model call by lead used" in caplog.text
+    assert "Compare coverage" not in caplog.text
+
+
+async def test_save_failure_returns_503_and_the_request_can_be_resent(monkeypatch) -> None:
+    """If the response cannot be stored, the reader is told and the request is released."""
+    app = build_app(Settings(), ScriptedModel(clarify))
+
+    def fail_save(*args: object, **kwargs: object) -> None:
+        """Fail the way a broken store would."""
+        raise OSError("disk full")
+
+    monkeypatch.setattr(app.state.store, "complete_request", fail_save)
+    payload: dict[str, object] = {
+        "conversation_id": None, "request_id": "save-fails",
+        "messages": [{"role": "user", "content": "Compare coverage."}],
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first: Response = await client.post("/chat", json=payload)
+        retry: Response = await client.post("/chat", json=payload)
+
+    assert first.status_code == 503
+    assert "could not save" in first.json()["answer"]
+    assert "disk full" not in first.text
+    assert retry.status_code == 409
+    assert "interrupted" in retry.json()["answer"]
+
+
+async def test_cancelled_request_is_marked_interrupted_and_does_not_replay_work() -> None:
+    """A dropped connection releases the conversation so the reader can send again."""
+    started: asyncio.Event = asyncio.Event()
+
+    async def hang(call: ModelCall) -> FinalOutput:
+        """Keep the Lead waiting until the request is cancelled."""
+        started.set()
+        await asyncio.sleep(60)
+
+    app = build_app(Settings(), ScriptedModel(hang))
+    payload: dict[str, object] = {
+        "conversation_id": None, "request_id": "dropped",
+        "messages": [{"role": "user", "content": "Compare coverage."}],
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        task = asyncio.create_task(client.post("/chat", json=payload))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        retry: Response = await client.post("/chat", json=payload)
+
+    assert retry.status_code == 409
+    assert "interrupted" in retry.json()["answer"]

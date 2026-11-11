@@ -98,9 +98,27 @@ response shape.
 | Research limit reached | The available answer, a cited partial answer, or a limit explanation. These results use `200`. |
 | Invalid agent output, unexpected execution error, or response persistence failure | A reader-facing message with the mapped status. These paths currently use `502`, `500`, and `503` respectively. |
 
-The application failure map also defines other categories for the workflow.
-Source-level failures such as a paywall usually contribute to findings or
-answer limitations instead of deciding the HTTP status of the whole turn.
+The failure map has five categories: model unavailable (`503`), research limit
+(`200`), invalid output (`502`), persistence failure (`503`), and unexpected
+(`500`). A provider error in the Lead stage gives the model-unavailable result.
+The same error inside a Researcher or the Writer is a recorded failed tool call,
+so the other side's research survives and the answer names the missing side.
+Source-level failures such as a paywall contribute to findings or answer
+limitations instead of deciding the HTTP status of the whole turn.
+
+An unexpected error inside a Researcher run, a findings save, or the Writer is a
+recorded failed tool call instead of an unrecorded tool string. Findings are saved
+before they join request state, so a failed save leaves no phantom findings. An
+unexpected error while discovering or reading one article is a failed outlet or
+failed read, and the other outlets continue.
+
+Transient failures are not retried automatically, except article reads under the
+shared budget. A model failure returns a retryable status, and the browser's
+retry reuses the request ID. If the response cannot be saved, the request is marked
+interrupted and the reader can resend it. A dropped connection also interrupts the
+request. Each finished turn logs one line with request and conversation IDs,
+status, failure category, tool-call counts, and seconds. Each model call logs the
+agent and token count. Reader text and stack traces are never logged or returned.
 [Chat contracts](../src/backend/interfaces/http/chat_contracts.py) ·
 [HTTP routes](../src/backend/interfaces/http/app.py) ·
 [Failure categories](../src/backend/application/turn/failure_category.py)

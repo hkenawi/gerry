@@ -8,7 +8,9 @@ produce cited claims, and renders the validated answer. The HTTP layer, sessions
 and progress streaming are connected to this function separately."""
 
 import asyncio
+import logging
 
+from openai import APIError
 from datetime import date
 from dataclasses import dataclass
 from agents.models.interface import Model
@@ -35,6 +37,7 @@ from backend.application.answer.sample_assessment import (
     assess_sample,
 )
 
+logger: logging.Logger = logging.getLogger(__name__)
 LIMIT_NOTE: str = (
     "The research limit was reached before every gap could be followed up, "
     "so some gaps remain."
@@ -154,6 +157,14 @@ async def run_turn(
         if state.final_answer is None:
             return build_failure_result(state, FailureCategory.RESEARCH_LIMIT_REACHED)
         return TurnResult(state.final_answer, state.recorder.records)
+    except APIError as error:
+        logger.error("Model provider failed during the Lead stage (%s).", type(error).__name__)
+        state.recorder.record(
+            "lead", "research", ToolCallOutcome.FAILURE, "The language model was unavailable.",
+        )
+        if state.final_answer is not None:
+            return TurnResult(state.final_answer, state.recorder.records)
+        return build_failure_result(state, FailureCategory.MODEL_UNAVAILABLE)
     if outcome is None:
         return build_failure_result(state, FailureCategory.INVALID_OUTPUT)
     if outcome.brief.status is not BriefStatus.CLEAR:

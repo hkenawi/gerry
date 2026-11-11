@@ -23,16 +23,9 @@ def test_failure_descriptions_have_reader_safe_messages_and_valid_statuses() -> 
         ), category
 
 
-def test_failure_metadata_preserves_status_and_transience() -> None:
-    """Keep the expected HTTP codes and the categories marked transient."""
+def test_failure_metadata_preserves_statuses() -> None:
+    """Keep the expected HTTP codes."""
     assert describe_failure(FailureCategory.PERSISTENCE_FAILURE).http_status == 503
     assert describe_failure(FailureCategory.INVALID_OUTPUT).http_status == 502
     assert describe_failure(FailureCategory.UNEXPECTED).http_status == 500
-    assert {
-        category for category in FailureCategory if describe_failure(category).is_transient
-    } == {
-        FailureCategory.SOURCE_UNAVAILABLE,
-        FailureCategory.MODEL_UNAVAILABLE,
-        FailureCategory.INVALID_OUTPUT,
-        FailureCategory.RESEARCHER_FAILURE,
-    }
+    assert describe_failure(FailureCategory.MODEL_UNAVAILABLE).http_status == 503

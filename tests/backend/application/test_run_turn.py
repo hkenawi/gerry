@@ -5,10 +5,12 @@ A scripted model drives the real agents, tools, budget, validation, and renderer
 Only the model and the article sources are fakes, so these tests are offline.
 """
 
+import httpx
 import pytest
 import asyncio
 
 from typing import Any
+from openai import APIConnectionError
 
 from backend.agents.lead.tools import check_brief
 from backend.application.settings import Settings
@@ -645,3 +647,147 @@ async def test_writer_can_return_an_evidence_gap_to_the_lead(
         for call in scenario.model.calls if "You are the Lead" in call.system_instructions
     )
     assert "## Sources" in result.answer
+
+
+def provider_outage(call: ModelCall):
+    """
+    Fail the way an unreachable model provider does.
+    """
+    raise APIConnectionError(request=httpx.Request("POST", "https://model.example"))
+
+
+async def test_model_outage_in_the_lead_returns_a_retryable_model_failure(
+    make_state,
+) -> None:
+    """
+    A provider error is reported as an unavailable model, not an unexpected failure.
+    """
+    scenario = Scenario()
+    scenario.lead_reply = provider_outage
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is FailureCategory.MODEL_UNAVAILABLE
+    assert result.answer == describe_failure(FailureCategory.MODEL_UNAVAILABLE).message
+
+
+async def test_model_outage_in_one_researcher_leaves_a_partial_answer(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    One side's model failure is recorded while the other side still produces an answer.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    scenario.researcher_replies[SourceGroup.CONSERVATIVE] = provider_outage
+    scenario.writer_replies = [
+        {
+            "summary": [
+                {
+                    "text": "Large protests took place in Paris.",
+                    "passage_ids": [articles["npr"].passages[0].passage_id],
+                }
+            ]
+        }
+    ]
+    scenario.lead_reply = fan_out_then([])
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert "No conservative articles could be retrieved" in result.answer
+    assert any(
+        record.tool == "research_conservative_coverage" and record.outcome == "failure"
+        for record in result.tool_calls
+    )
+
+
+async def test_request_deadline_expiring_returns_a_research_limit_result(make_state) -> None:
+    """
+    A model call still running at the deadline ends the turn with a plain result.
+    """
+    async def stalled(call: ModelCall):
+        """
+        Hold the Lead's model call past the one-second deadline.
+        """
+        await asyncio.sleep(5)
+
+    result = await run_turn(
+        MESSAGES, make_state(Settings(request_deadline_seconds=1)), ScriptedModel(stalled)
+    )
+
+    assert result.failure is FailureCategory.RESEARCH_LIMIT_REACHED
+
+
+async def test_failure_saving_research_is_a_failed_call_and_the_other_side_survives(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    If one group's findings cannot be saved the call fails and is not kept as findings.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    scenario.writer_replies = [
+        {
+            "summary": [
+                {
+                    "text": "Large protests took place in Paris.",
+                    "passage_ids": [articles["npr"].passages[0].passage_id],
+                }
+            ]
+        }
+    ]
+    scenario.lead_reply = fan_out_then([])
+    state = make_state()
+    real_save = state.store.save_research
+
+    def save_unless_conservative(conversation_id, brief, findings) -> None:
+        """
+        Fail only when the saved findings would include the conservative group.
+        """
+        if any(item.group is SourceGroup.CONSERVATIVE for item in findings):
+            raise OSError("storage unavailable")
+        real_save(conversation_id, brief, findings)
+
+    state.store.save_research = save_unless_conservative
+
+    result = await run_turn(MESSAGES, state, scenario.model)
+
+    assert result.failure is None
+    assert any(
+        record.tool == "research_conservative_coverage" and record.outcome == "failure"
+        for record in result.tool_calls
+    )
+    assert state.findings[SourceGroup.CONSERVATIVE] == []
+
+
+async def test_writer_failure_is_a_recorded_failed_call_and_the_turn_ends_plainly(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    A Writer error is reported to the Lead, and no unwritten answer is invented.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+
+    async def writer_down(call: ModelCall):
+        """
+        Fail every Writer call and script the other agents as usual.
+        """
+        if "You are the Writer" in call.system_instructions:
+            provider_outage(call)
+        return await scenario.dispatch(call)
+
+    result = await run_turn(MESSAGES, make_state(), ScriptedModel(writer_down))
+
+    assert result.failure is FailureCategory.INVALID_OUTPUT
+    assert any(
+        record.tool == "write_answer" and record.outcome == "failure"
+        for record in result.tool_calls
+    )

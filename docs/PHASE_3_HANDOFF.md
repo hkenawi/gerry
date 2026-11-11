@@ -92,7 +92,7 @@ Prompts are Markdown beside each agent (`prompt.md`).
 | `success` | Article saved and usable. |
 | `fetch_failed` | Retried (shared budget), then reported as a failed article. |
 | `paywall`, `access_denied`, `missing_date`, `date_conflict`, `outside_window`, `incomplete_text`, `extraction_failed`, `no_results` | Not retried; article excluded; failure listed in the answer. |
-| `storage_failed` | Treated like any failed article today. **Mapping it to `PERSISTENCE_FAILURE` is not done** (Phase 5). |
+| `storage_failed` | Treated like a failed article. The answer's limitations say it could not be saved. It does not fail the turn. |
 | `budget_exhausted` | Produced by my wrapper when the shared budget is spent. Research stops; supported findings are written up with a limit note. |
 
 ## What the frontend can rely on in `answer`
@@ -131,8 +131,9 @@ You can reuse the scripted model for browser or API tests without a provider.
 - **Live model behaviour is unverified.** Tool calling, structured output, and
   concurrent tool calls through LiteLLM and Vertex Gemini have not been run. The
   live spike was parked by the user. This must happen before Phase 4 is signed off.
-- **Model or provider outages** (litellm exceptions) are not caught or mapped yet;
-  they propagate out of `run_turn`. Phase 5.
+- **Model or provider outages** (any `openai.APIError`, which includes LiteLLM's
+  errors) are mapped in Phase 5: Lead failure gives `MODEL_UNAVAILABLE` (503), and a
+  Researcher or Writer failure becomes a recorded failed tool call.
 - **Follow-up neutrality** ("do not pass the other group's conclusions") is a
   prompt rule. Code cannot verify what the Lead writes in `focus_question`.
 - **Time:** the Lead stage uses the remaining shared deadline. The fallback

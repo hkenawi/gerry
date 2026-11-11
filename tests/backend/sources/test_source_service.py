@@ -355,3 +355,59 @@ def test_simultaneous_outlet_reads_preserve_exact_duplicate_relationships() -> N
         first_article.duplicate_of == second_article.article_id
         or second_article.duplicate_of == first_article.article_id
     )
+
+
+def crash_fetch(url: str, hosts: tuple[str, ...], limits: SourceLimits) -> FetchedDocument:
+    """Fail with an error the fetcher is not expected to raise."""
+    raise RuntimeError("unexpected parser crash")
+
+
+def test_unexpected_error_during_a_read_is_a_failed_read_not_an_exception() -> None:
+    """One bad article must not crash the Researcher; it is reported as unusable."""
+    store, conversation_id = build_store()
+
+    result = ArticleSourceService(store, fetcher=crash_fetch).read_article(
+        ARTICLE_URL, "npr", conversation_id,
+        date(2026, 11, 7), date(2026, 11, 8), ("npr",),
+    )
+
+    assert result.article is None
+    assert result.outcome.status.value == "extraction_failed"
+    assert "crash" not in (result.outcome.detail or "")
+
+
+def test_unexpected_error_for_one_outlet_does_not_stop_the_search() -> None:
+    """A crash while searching one outlet leaves the other outlet's candidates intact."""
+    store, _ = build_store()
+    feed: bytes = b'''<rss><channel><item><title>Earthquake rescue efforts</title>
+<link>https://www.npr.org/story</link><description>Rescue workers help residents.</description>
+<pubDate>Sat, 07 Nov 2026 09:00:00 -0500</pubDate></item></channel></rss>'''
+
+    def fetch_mixed(url: str, hosts: tuple[str, ...], limits: SourceLimits) -> FetchedDocument:
+        """Crash for one publisher and serve a feed for the other."""
+        if "npr.org" not in url:
+            raise RuntimeError("unexpected parser crash")
+        return FetchedDocument(url, feed, "application/rss+xml")
+
+    result = ArticleSourceService(store, fetcher=fetch_mixed).search_articles(
+        "earthquake rescue", date(2026, 11, 7), date(2026, 11, 8), ("npr", "fox"),
+    )
+
+    statuses = {outcome.outlet_id: outcome.status.value for outcome in result.outcomes}
+    assert statuses == {"npr": "success", "fox": "fetch_failed"}
+    assert len(result.candidates) == 1
+
+
+def test_storage_failure_when_loading_collected_articles_is_a_failed_read() -> None:
+    """If saved evidence cannot be loaded the read fails explicitly."""
+    from unittest.mock import patch
+
+    store, conversation_id = build_store()
+    with patch.object(store, "list_articles", side_effect=OSError("Unavailable")):
+        result = ArticleSourceService(store, fetcher=fetch_article).read_article(
+            ARTICLE_URL, "npr", conversation_id,
+            date(2026, 11, 7), date(2026, 11, 8), ("npr",),
+        )
+
+    assert result.outcome.status.value == "storage_failed"
+    assert result.article is None
