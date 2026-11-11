@@ -67,8 +67,9 @@ class _ConversationState:
 class InMemoryStore:
     """Own authoritative state for one backend process without external services."""
 
-    def __init__(self) -> None:
-        """Create empty state and the lock used to claim and finish turns."""
+    def __init__(self, max_conversations: int = 100) -> None:
+        """Create empty state, the claim lock, and the cap on conversations kept."""
+        self._max_conversations: int = max_conversations
         self._lock: LockType = Lock()
         self._requests: dict[str, RequestRecord] = {}
         self._conversations: dict[str, _ConversationState] = {}
@@ -96,10 +97,25 @@ class InMemoryStore:
                 conversation_id=conversation_id,
             )
             claimed: RequestRecord = deepcopy(record)
+            self._conversations.pop(conversation_id, None)
             self._conversations[conversation_id] = conversation
             conversation.active_request_id = request.request_id
             self._requests[request.request_id] = record
+            self._evict_idle_conversations()
             return claimed, True
+
+    def _evict_idle_conversations(self) -> None:
+        """Drop the least recently used finished conversations beyond the cap."""
+        idle: list[str] = [
+            conversation_id for conversation_id, conversation in self._conversations.items()
+            if conversation.active_request_id is None
+        ]
+        for conversation_id in idle[:max(0, len(self._conversations) - self._max_conversations)]:
+            del self._conversations[conversation_id]
+            self._requests = {
+                request_id: record for request_id, record in self._requests.items()
+                if record.conversation_id != conversation_id
+            }
 
     def load_conversation(self, conversation_id: str) -> tuple[ChatMessage, ...]:
         """Return a detached visible history or raise KeyError if state is gone."""

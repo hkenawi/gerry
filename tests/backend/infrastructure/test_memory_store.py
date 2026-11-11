@@ -212,3 +212,64 @@ def test_simultaneous_retries_only_claim_work_once() -> None:
 
     assert sum(should_start for _, should_start in claims) == 1
     assert len({record.conversation_id for record, _ in claims}) == 1
+
+
+def start_conversation(store: InMemoryStore, name: str, complete: bool = True) -> str:
+    """Begin a first turn named ``name`` and, by default, finish it."""
+    request: ChatRequest = ChatRequest.model_validate({
+        "conversation_id": None, "request_id": name,
+        "messages": [{"role": "user", "content": name}],
+    })
+    record, _ = store.begin_request(request)
+    if complete:
+        store.complete_request(ChatResponse(
+            conversation_id=record.conversation_id, request_id=name,
+            answer="Done.", tool_calls=[],
+        ))
+    return record.conversation_id
+
+
+def test_oldest_idle_conversation_is_evicted_once_the_cap_is_exceeded() -> None:
+    """Bound memory by dropping the least recently used finished conversation."""
+    store: InMemoryStore = InMemoryStore(max_conversations=2)
+    first: str = start_conversation(store, "first")
+    second: str = start_conversation(store, "second")
+    third: str = start_conversation(store, "third")
+
+    with pytest.raises(KeyError):
+        store.load_conversation(first)
+    assert store.request_status("first") is None
+    assert store.load_conversation(second) and store.load_conversation(third)
+
+
+def test_a_running_conversation_is_never_evicted() -> None:
+    """Do not drop a conversation while its turn is still being worked on."""
+    store: InMemoryStore = InMemoryStore(max_conversations=2)
+    running: str = start_conversation(store, "running", complete=False)
+    idle: str = start_conversation(store, "idle")
+    start_conversation(store, "newest")
+
+    with pytest.raises(KeyError):
+        store.load_conversation(idle)
+    assert store.load_conversation(running) == ()
+
+
+def test_continuing_a_conversation_protects_it_from_eviction() -> None:
+    """Treat a follow-up as use, so the other idle conversation goes first."""
+    store: InMemoryStore = InMemoryStore(max_conversations=2)
+    older: str = start_conversation(store, "older")
+    newer: str = start_conversation(store, "newer")
+    follow_up: ChatRequest = ChatRequest.model_validate({
+        "conversation_id": older, "request_id": "follow-up",
+        "messages": [*[m.model_dump() for m in store.load_conversation(older)],
+                     {"role": "user", "content": "More."}],
+    })
+    store.begin_request(follow_up)
+    store.complete_request(ChatResponse(
+        conversation_id=older, request_id="follow-up", answer="Done.", tool_calls=[],
+    ))
+    start_conversation(store, "third")
+
+    with pytest.raises(KeyError):
+        store.load_conversation(newer)
+    assert store.load_conversation(older)

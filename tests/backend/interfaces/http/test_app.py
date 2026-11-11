@@ -368,3 +368,19 @@ async def test_cancelled_request_is_marked_interrupted_and_does_not_replay_work(
 
     assert retry.status_code == 409
     assert "interrupted" in retry.json()["answer"]
+
+
+async def test_only_the_most_recent_progress_streams_are_kept(monkeypatch) -> None:
+    """Old progress lists are dropped so a long-running process does not grow forever."""
+    monkeypatch.setattr("backend.interfaces.http.app.MAX_PROGRESS_STREAMS", 2)
+    async with build_client() as client:
+        for name in ("one", "two", "three"):
+            await client.post("/chat", json={
+                "conversation_id": None, "request_id": name,
+                "messages": [{"role": "user", "content": "Compare coverage."}],
+            })
+        oldest: Response = await client.get("/chat/progress/one")
+        newest: Response = await client.get("/chat/progress/three")
+
+    assert "event:" not in oldest.text
+    assert "event:" in newest.text

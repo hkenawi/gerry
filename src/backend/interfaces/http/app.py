@@ -47,6 +47,7 @@ from backend.infrastructure.persistence.memory import (
 
 
 logger: logging.Logger = logging.getLogger(__name__)
+MAX_PROGRESS_STREAMS: int = 100
 FRONTEND_DIRECTORY: Path = Path(__file__).resolve().parents[3] / "frontend"
 
 
@@ -140,6 +141,8 @@ def create_http_app(
 
         events: list[ProgressEvent] = []
         progress[request.request_id] = events
+        while len(progress) > MAX_PROGRESS_STREAMS:
+            del progress[next(iter(progress))]
 
         def publish(event_type: ProgressEventType, agent: str, message: str) -> None:
             """Append progress observed during this turn."""
