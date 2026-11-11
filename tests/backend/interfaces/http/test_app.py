@@ -9,8 +9,9 @@ import httpx
 import pytest
 import asyncio
 
-from openai import APIConnectionError
 from collections.abc import Callable
+from openai import APIConnectionError
+from lxml.html import HtmlElement, fromstring
 from httpx import Response, AsyncClient, ASGITransport
 
 from backend.sources.articles import ArticleRecord
@@ -54,19 +55,39 @@ async def test_health_endpoint_reports_ok() -> None:
 
 
 async def test_home_serves_the_chat_page_and_its_assets() -> None:
-    """Open Gerry and load its browser assets from the same server."""
+    """Open Gerry and follow its versioned asset URLs to bypass stale cache entries."""
     async with build_client() as client:
         page: Response = await client.get("/")
-        script: Response = await client.get("/static/chat.js")
-        stylesheet: Response = await client.get("/static/styles.css")
+        front_page: HtmlElement = fromstring(page.text)
+        script_url: str = front_page.xpath("string(//script[@type='module']/@src)")
+        style_url: str = front_page.xpath("string(//link[@rel='stylesheet']/@href)")
+
+        assert script_url.startswith("/static/chat.js?v=") and script_url.split("=", 1)[1]
+        assert style_url.startswith("/static/styles.css?v=") and style_url.split("=", 1)[1]
+
+        script: Response = await client.get(script_url)
+        stylesheet: Response = await client.get(style_url)
 
     assert page.status_code == script.status_code == stylesheet.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
     assert "Compare coverage" in page.text
-    assert "/static/chat.js" in page.text
-    assert "/static/styles.css" in page.text
     assert "javascript" in script.headers["content-type"]
     assert stylesheet.headers["content-type"].startswith("text/css")
+
+
+async def test_front_page_offers_five_stories_for_comparison() -> None:
+    """Read the masthead and find five story buttons alongside the question form."""
+    async with build_client() as client:
+        page: Response = await client.get("/")
+
+    front_page: HtmlElement = fromstring(page.text)
+    masthead: HtmlElement = front_page.xpath("//header")[0]
+    stories: list[HtmlElement] = front_page.xpath("//aside//button[@type='button']")
+
+    assert masthead.xpath("normalize-space(.//h1)") == "Gerry"
+    assert "the Manderer" in masthead.text_content()
+    assert len(stories) == 5
+    assert len(front_page.xpath("//main//form//textarea")) == 1
 
 
 async def test_chat_runs_the_workflow_and_replays_the_first_turn() -> None:

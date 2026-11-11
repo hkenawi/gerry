@@ -4,56 +4,88 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Compare how selected news outlets cover the same international event." />
-    <title>Gerry — A wider view</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-    <script type="module" src="/static/chat.js"></script>
+    <title>Gerry | the Manderer</title>
+    <link rel="stylesheet" href="/static/styles.css?v=be0b3e8b" />
+    <script type="module" src="/static/chat.js?v=60d34da0"></script>
   </head>
   <body>
-    <main>
+    <main id="newspaper">
       <header class="masthead">
-        <a class="wordmark" href="/" aria-label="Gerry home">gerry<span>.</span></a>
-        <span class="edition">More perspectives. Better context.</span>
+        <h1 class="wordmark">Gerry</h1>
+        <p class="masthead-subtitle">the Manderer</p>
+        <time class="edition" datetime="2026-11-10">Nov. 10, 2026</time>
       </header>
 
-      <section class="introduction" aria-labelledby="purpose">
-        <p class="eyebrow">News, with room for perspective</p>
-        <h1 id="purpose">A wider view of the same story.</h1>
-        <p class="description">
-          Compare how selected liberal and conservative news outlets cover an
-          international event. See what they emphasize, where they overlap, and
-          the sources behind the comparison.
-        </p>
-      </section>
+      <div class="front-page">
+        <section id="chat" class="chat" aria-label="Coverage comparison">
+          <h2 id="purpose">How did the press cover it?</h2>
+          <p class="description">
+            See how liberal and conservative outlets report on the same world event,
+            what they emphasize, and where their coverage overlaps.
+          </p>
+          <button id="new-chat" class="secondary-button" type="button" hidden>Back to front page</button>
+          <h2 id="story-headline" tabindex="-1" hidden></h2>
+          <div id="messages"></div>
+          <p id="pending-question" class="chat-question" hidden></p>
+          <p id="progress" role="status" hidden></p>
+          <p id="error" role="alert" hidden></p>
+          <div id="error-tools"></div>
+          <button id="retry-message" class="secondary-button" type="button" hidden>Retry message</button>
+          <form id="chat-form" class="chat-form">
+            <label for="gerry-question">Your question</label>
+            <textarea
+              id="gerry-question"
+              placeholder="Ask about an international event and include a date or time period."
+              rows="3"
+            ></textarea>
+            <div class="form-actions">
+              <div class="connection-panel" aria-label="Gerry availability">
+                <p id="connection-message" role="status"></p>
+                <button id="check-connection" class="secondary-button" type="button" hidden>Try again</button>
+              </div>
+              <button id="send-message" type="submit" disabled>Compare coverage</button>
+            </div>
+          </form>
+        </section>
 
-      <section class="connection-panel" aria-label="Gerry availability">
-        <p role="status">
-          <span id="connection-dot" class="status-dot" aria-hidden="true"></span>
-          <span id="connection-message">Connecting to Gerry…</span>
-        </p>
-        <button id="check-connection" type="button" hidden>Try again</button>
-      </section>
-
-      <section id="chat" class="chat" aria-label="Gerry chat" hidden>
-        <div class="chat-heading">
-          <h2>Compare coverage</h2>
-          <button id="new-chat" type="button" hidden>New chat</button>
-        </div>
-        <div id="messages"></div>
-        <p id="pending-question" class="chat-question" hidden></p>
-        <p id="progress" role="status" hidden></p>
-        <p id="error" role="alert" hidden></p>
-        <button id="retry-message" type="button" hidden>Retry message</button>
-        <form id="chat-form" class="chat-form">
-          <label for="gerry-question">Your question</label>
-          <textarea
-            id="gerry-question"
-            placeholder="Name an international event and a date or time period."
-            rows="3"
-          ></textarea>
-          <button id="send-message" type="submit" disabled>Send</button>
-        </form>
-      </section>
-      <footer>A comparison of sampled reporting, with attribution and context.</footer>
+        <aside class="stories" aria-labelledby="recent-stories">
+          <div class="stories-heading">
+            <h2 id="recent-stories">Recent stories</h2>
+          </div>
+          <ul class="story-list">
+            <li>
+              <button type="button" class="story" data-question="How did different outlets cover the November 10, 2026 U.S.-mediated talks between Russia and Ukraine in Abu Dhabi?">
+                <span class="story-title">Russia and Ukraine resume talks</span>
+                <span class="story-context">U.S. mediators bring the two sides together in Abu Dhabi.</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" class="story" data-question="How did different outlets cover the opening of COP31 in Antalya on November 9 and 10, 2026?">
+                <span class="story-title">COP31 opens in Antalya</span>
+                <span class="story-context">The U.N. climate summit begins in Türkiye.</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" class="story" data-question="How did different outlets cover the November 10, 2026 offer by Indonesia’s vice president Gibran Rakabuming Raka to resign?">
+                <span class="story-title">Indonesia’s vice president offers to resign</span>
+                <span class="story-context">Gibran Rakabuming Raka faces questions over his eligibility.</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" class="story" data-question="How did different outlets cover the Israeli strikes and gunfire in Gaza reported on November 10, 2026?">
+                <span class="story-title">Israeli strikes and gunfire in Gaza</span>
+                <span class="story-context">Five people were reported killed on Tuesday.</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" class="story" data-question="How did different outlets cover the preliminary results of New Zealand’s November 7, 2026 general election?">
+                <span class="story-title">New Zealand counts election votes</span>
+                <span class="story-context">Election officials release preliminary results from the general election.</span>
+              </button>
+            </li>
+          </ul>
+        </aside>
+      </div>
     </main>
   </body>
 </html>
