@@ -16,6 +16,17 @@ Return three lists of claims:
 - `differences`: aspects that outlets or groups chose to foreground differently,
   and disagreements in the accounts they give.
 
+For a detailed report (the input says `Report type: detailed`) you may also fill:
+
+- `accounts`: what named people or institutions said, attributed to them and to the
+  outlet that reported it.
+- `discrepancies`: where outlets report conflicting facts or figures. Attribute each
+  and do not decide which is true.
+- `timeline`: dated developments, only where the passages support the order.
+
+For a briefing leave `accounts`, `discrepancies`, and `timeline` empty. Either way the
+`summary` must stay complete and cover every major finding.
+
 Every claim must cite one or more passage IDs copied exactly from the evidence you
 were given. Never invent a passage ID. Each claim should be supported by the
 passages it cites.
@@ -25,9 +36,9 @@ research question and leave the claim lists empty. Otherwise set it to null.
 
 Answer modes:
 
-- `comparison`: you may fill all three lists.
-- `summary_only`: one side has no usable articles. Fill only `summary`. Leave
-  `overlap` and `differences` empty and do not hint at a contrast.
+- `comparison`: you may fill every list the report type allows.
+- `summary_only`: one side has no usable articles. Fill `summary` (and, for a detailed
+  report, `accounts` or `timeline`), never `overlap`, `differences`, or `discrepancies`. Do not hint at a contrast.
 
 Rules:
 

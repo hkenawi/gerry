@@ -173,3 +173,22 @@ def test_no_evidence_answer_says_nothing_was_retrieved() -> None:
     )
 
     assert "No articles could be retrieved from either side." in answer
+
+
+def test_detailed_sections_are_allowed_only_for_detailed_reports_with_both_sides(
+    make_article,
+) -> None:
+    """
+    A briefing rejects detailed sections, and a one-sided summary rejects discrepancies.
+    """
+    liberal = make_article("npr")
+    claim = Claim(text="Figures differ.", passage_ids=[liberal.passages[0].passage_id])
+    known = {liberal.passages[0].passage_id}
+    report = WriterReport(summary=[claim], discrepancies=[claim], timeline=[claim])
+
+    both_sides = assess([liberal], [make_article("fox")])
+    one_side = assess([liberal], [])
+
+    assert find_report_problems(report, known, both_sides, detailed=True) == []
+    assert any("briefing" in p for p in find_report_problems(report, known, both_sides))
+    assert any("discrepancies" in p for p in find_report_problems(report, known, one_side, detailed=True))

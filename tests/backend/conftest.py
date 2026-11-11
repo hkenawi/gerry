@@ -18,6 +18,7 @@ from backend.infrastructure.persistence import InMemoryStore
 from backend.interfaces.http.chat_contracts import ChatRequest
 from backend.application.turn.request_state import RequestState, build_request_state
 from backend.sources.access import (
+    ArticleCandidate,
     ArticleReadResult,
     ArticleSearchResult,
     SourceAccessOutcome,
@@ -78,6 +79,8 @@ class FakeSources:
         self.search_result: ArticleSearchResult | None = None
         self.search_calls: list[dict[str, object]] = []
         self.read_calls: list[dict[str, object]] = []
+        self.headlines: list[ArticleCandidate] = []
+        self.headline_calls: list[dict[str, object]] = []
 
     def search_articles(
         self,
@@ -104,6 +107,30 @@ class FakeSources:
                 SourceAccessOutcome(outlet_id=outlet, status="no_results")
                 for outlet in assigned_outlets
             )
+        )
+
+    def discover_headlines(
+        self,
+        query: str,
+        start_date: date,
+        end_date: date,
+        assigned_outlets: tuple[str, ...],
+    ) -> ArticleSearchResult:
+        """
+        Record the call and return the scripted headlines.
+        """
+        self.headline_calls.append(
+            {"query": query, "start_date": start_date, "end_date": end_date}
+        )
+        found = {candidate.outlet_id for candidate in self.headlines}
+        return ArticleSearchResult(
+            candidates=tuple(self.headlines),
+            outcomes=tuple(
+                SourceAccessOutcome(
+                    outlet_id=outlet, status="success" if outlet in found else "no_results",
+                )
+                for outlet in assigned_outlets
+            ),
         )
 
     def read_article(

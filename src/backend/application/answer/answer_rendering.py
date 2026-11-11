@@ -8,7 +8,10 @@ reported as problems so they can be corrected and are never shown to readers."""
 
 import re
 
+from datetime import date
+
 from backend.sources.articles import ArticleRecord
+from backend.application.evidence.recent_events import EventCandidate
 from backend.sources.access import SourceAccessOutcome
 from backend.agents.researcher_findings import SourceGroup
 from backend.agents.writer.schemas import Claim, WriterReport
@@ -92,9 +95,13 @@ def find_report_problems(
     report: WriterReport,
     known_passage_ids: set[str],
     assessment: SampleAssessment,
+    detailed: bool = False,
 ) -> list[str]:
-    """Check the Writer's claims against the evidence and answer mode."""
-    claims: list[Claim] = [*report.summary, *report.overlap, *report.differences]
+    """Check the Writer's claims against the evidence, answer mode, and report type."""
+    claims: list[Claim] = [
+        *report.summary, *report.overlap, *report.differences,
+        *report.accounts, *report.discrepancies, *report.timeline,
+    ]
     cited_passage_ids: dict[str, None] = dict.fromkeys(
         passage_id for claim in claims for passage_id in claim.passage_ids
     )
@@ -104,11 +111,15 @@ def find_report_problems(
         if passage_id not in known_passage_ids
     ]
     if assessment.mode is not AnswerMode.COMPARISON and (
-        report.overlap or report.differences
+        report.overlap or report.differences or report.discrepancies
     ):
         problems.append(
-            "Do not describe overlap or differences: one side has no articles, "
-            "so only an objective summary is allowed."
+            "Do not describe overlap, differences, or discrepancies: one side has "
+            "no articles, so only an objective summary is allowed."
+        )
+    if not detailed and (report.accounts or report.discrepancies or report.timeline):
+        problems.append(
+            "This is a briefing: leave accounts, discrepancies, and timeline empty."
         )
     return problems
 
@@ -244,6 +255,13 @@ def render_answer(
         sections.append(
             "## Where coverage differs\n" + render_claims(report.differences, numbers)
         )
+    for heading, claims in (
+        ("Attributed accounts", report.accounts),
+        ("Reporting discrepancies", report.discrepancies),
+        ("Timeline", report.timeline),
+    ):
+        if claims:
+            sections.append(f"## {heading}\n" + render_claims(claims, numbers))
     sections.append(
         "## Limitations\n" + render_limitations(assessment, failed_reads, notes)
     )
@@ -263,3 +281,39 @@ def render_no_evidence_answer(
     if failures:
         lines.append("\n".join(failures))
     return "\n\n".join(lines)
+
+
+def render_event_options(
+    question: str,
+    events: list[EventCandidate],
+    window: tuple[date, date],
+    maximum: int = 5,
+) -> str:
+    """
+    Render the question and the offered events, attributed to outlets, with the rule.
+    """
+    lines: list[str] = [question.strip(), ""]
+    for number, event in enumerate(events, start=1):
+        others: list[str] = [
+            outlet_display_name(outlet) for outlet in event.outlet_ids
+            if outlet != event.headline_outlet
+        ]
+        dates: str = f"{event.first_date:%b} {event.first_date.day}"
+        if event.last_date != event.first_date:
+            dates += f" to {event.last_date:%b} {event.last_date.day}"
+        lines.append(
+            f"{number}. {outlet_display_name(event.headline_outlet)} headline: "
+            f"\u201c{event.headline}\u201d Also reported by {', '.join(others)}. ({dates})"
+        )
+    lines.append("")
+    lines.append(
+        "Selection rule: international events that at least two approved outlets "
+        f"reported between {window[0].isoformat()} and {window[1].isoformat()}, "
+        "ordered by how many outlets reported them. They are not ranked by how much "
+        "outlets disagree."
+    )
+    if not events:
+        lines.append("No events met this rule, so none are offered.")
+    elif len(events) < maximum:
+        lines.append(f"Only {len(events)} events met this rule, so fewer than {maximum} are shown.")
+    return "\n".join(lines)

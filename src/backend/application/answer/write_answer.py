@@ -64,8 +64,9 @@ async def write_answer(
     model_settings: ModelSettings | None,
     question: str,
     alignment: list[AspectAlignment],
+    detailed: bool = False,
 ) -> WriteResult:
-    """Write, validate, and store the answer or explain the failure."""
+    """Write, validate, and store the briefing, or a detailed report, or explain the failure."""
     if state.writer_calls >= MAX_WRITER_CALLS:
         return refuse("The Writer has already been tried the maximum number of times.")
     state.writer_calls += 1
@@ -101,7 +102,7 @@ async def write_answer(
     def validate(report: WriterReport) -> str | None:
         """Reject claims with unknown citations or outside the answer mode."""
         return " ".join(
-            find_report_problems(report, known_passage_ids, assessment)
+            find_report_problems(report, known_passage_ids, assessment, detailed)
         ) or None
 
     writer_input: str = build_writer_input(
@@ -111,6 +112,7 @@ async def write_answer(
         alignment,
         [item for items in state.findings.values() for item in items],
         articles,
+        detailed,
     )
     report: WriterReport | None
     problem: str | None

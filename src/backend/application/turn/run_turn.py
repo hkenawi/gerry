@@ -25,7 +25,7 @@ from backend.agents.researcher_findings import SourceGroup
 from backend.agents.writer.schemas import Claim, WriterReport
 from backend.interfaces.http.chat_contracts import ChatMessage
 from backend.application.turn.request_state import RequestState
-from backend.application.answer.answer_rendering import render_answer
+from backend.application.answer.answer_rendering import render_answer, render_event_options
 from backend.application.evidence.outlet_assignments import outlet_display_name
 from backend.application.turn.tool_calls import ToolCallOutcome, ToolCallRecord
 from backend.application.evidence.collected_evidence import collect_articles_by_group
@@ -83,6 +83,11 @@ async def run_lead_stage(
         """
         Require research and a stored answer before a clear brief is accepted.
         """
+        if output.event_ids:
+            if output.brief.status is BriefStatus.CLEAR:
+                return "Offer events only with a needs_clarification brief."
+            unknown: list[int] = [i for i in output.event_ids if i not in state.event_options]
+            return f"Event IDs {unknown} were not in the search results." if unknown else None
         if output.brief.status is not BriefStatus.CLEAR:
             return None
         if state.brief is None:
@@ -168,10 +173,14 @@ async def run_turn(
     if outcome is None:
         return build_failure_result(state, FailureCategory.INVALID_OUTPUT)
     if outcome.brief.status is not BriefStatus.CLEAR:
-        return TurnResult(
-            outcome.brief.clarifying_question or "",
-            state.recorder.records,
-        )
+        question: str = outcome.brief.clarifying_question or ""
+        if state.events_window is not None:
+            question = render_event_options(
+                question,
+                [state.event_options[i] for i in dict.fromkeys(outcome.event_ids)],
+                state.events_window,
+            )
+        return TurnResult(question, state.recorder.records)
     if state.final_answer is None:
         return build_failure_result(state, FailureCategory.INVALID_OUTPUT)
     return TurnResult(state.final_answer, state.recorder.records)

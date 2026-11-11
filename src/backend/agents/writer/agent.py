@@ -98,12 +98,14 @@ def build_writer_input(
     alignment: list[AspectAlignment],
     findings: list[ResearcherFindings],
     articles: tuple[ArticleRecord, ...],
+    detailed: bool = False,
 ) -> str:
     """
     Assemble the evidence package the Writer works from.
     """
     return (
         f"Reader's question: {question}\n"
+        f"Report type: {'detailed' if detailed else 'briefing'}\n"
         f"Event: {brief.event}\n"
         f"Answer mode: {assessment.mode.value}\n"
         f"Mode reason: {assessment.reason or 'none'}\n"

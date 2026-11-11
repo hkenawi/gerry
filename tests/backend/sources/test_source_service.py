@@ -411,3 +411,28 @@ def test_storage_failure_when_loading_collected_articles_is_a_failed_read() -> N
 
     assert result.outcome.status.value == "storage_failed"
     assert result.article is None
+
+
+def test_headline_discovery_without_a_topic_lists_every_dated_feed_entry() -> None:
+    """Recent-event discovery needs the feed's headlines, not a keyword match."""
+    store, _ = build_store()
+    feed: bytes = b'''<rss><channel>
+<item><title>Quake rocks coastal city</title><link>https://www.npr.org/a</link>
+<pubDate>Sat, 07 Nov 2026 09:00:00 -0500</pubDate></item>
+<item><title>Election results announced</title><link>https://www.npr.org/b</link>
+<pubDate>Sat, 07 Nov 2026 10:00:00 -0500</pubDate></item></channel></rss>'''
+
+    def fetch_feed(url: str, hosts: tuple[str, ...], limits: SourceLimits) -> FetchedDocument:
+        """Serve the same two-item feed for every request."""
+        return FetchedDocument(url, feed, "application/rss+xml")
+
+    service = ArticleSourceService(store, fetcher=fetch_feed)
+    everything = service.discover_headlines("", date(2026, 11, 7), date(2026, 11, 8), ("npr",))
+    filtered = service.discover_headlines("quake", date(2026, 11, 7), date(2026, 11, 8), ("npr",))
+
+    assert [c.title for c in everything.candidates] == [
+        "Quake rocks coastal city", "Election results announced",
+    ]
+    assert [c.title for c in filtered.candidates] == ["Quake rocks coastal city"]
+    with pytest.raises(ValueError):
+        service.search_articles("", date(2026, 11, 7), date(2026, 11, 8), ("npr",))

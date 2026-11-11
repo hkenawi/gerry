@@ -63,8 +63,20 @@ class ArticleSourceService:
         assigned_outlets: tuple[str, ...],
     ) -> ArticleSearchResult:
         """Discover hints only within trusted outlet assignments and date bounds."""
-        if start_date > end_date or not query.strip() or not assigned_outlets:
-            raise ValueError("Search requires a query, outlet assignment, and valid dates.")
+        if not query.strip():
+            raise ValueError("Search requires a query.")
+        return self.discover_headlines(query, start_date, end_date, assigned_outlets)
+
+    def discover_headlines(
+        self,
+        query: str,
+        start_date: date,
+        end_date: date,
+        assigned_outlets: tuple[str, ...],
+    ) -> ArticleSearchResult:
+        """Discover dated headlines for a period; a blank query lists every entry."""
+        if start_date > end_date or not assigned_outlets:
+            raise ValueError("Discovery requires an outlet assignment and valid dates.")
         candidates: list[ArticleCandidate] = []
         outcomes: list[SourceAccessOutcome] = []
         outlet_id: str

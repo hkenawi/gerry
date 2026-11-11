@@ -20,6 +20,8 @@ from backend.agents.researcher_findings import SourceGroup
 from backend.application.turn.request_state import RequestState
 from backend.agents.lead.tools import (
     WRITE_TOOL_NAME,
+    EVENTS_TOOL_NAME,
+    build_events_tool,
     RESEARCH_TOOL_NAMES,
     build_writer_tool,
     build_research_tool,
@@ -44,6 +46,10 @@ class LeadToolBatchHooks(AgentHooks[RequestState]):
         if not calls:
             return
         names: list[str] = [call.name for call in calls]
+        if EVENTS_TOOL_NAME in names:
+            if len(names) != 1:
+                raise ModelBehaviorError("Search for events by itself, before researching.")
+            return
         if not context.context.reusing_research and not all(
             context.context.rounds_started.values(),
         ):
@@ -90,6 +96,7 @@ def build_lead_agent(
         model_settings=model_settings or ModelSettings(),
         hooks=LeadToolBatchHooks(),
         tools=[
+            build_events_tool(),
             build_research_tool(SourceGroup.LIBERAL, model, model_settings),
             build_research_tool(SourceGroup.CONSERVATIVE, model, model_settings),
             build_writer_tool(model, model_settings),

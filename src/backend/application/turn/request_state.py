@@ -14,6 +14,7 @@ from typing import Callable, Protocol
 from dataclasses import field, dataclass
 
 from backend.application.settings import Settings
+from backend.application.evidence.recent_events import EventCandidate
 from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
 from backend.infrastructure.persistence import InMemoryStore
@@ -41,6 +42,17 @@ class SourceGateway(Protocol):
     ) -> ArticleSearchResult:
         """
         Discover candidate articles without collecting evidence.
+        """
+
+    def discover_headlines(
+        self,
+        query: str,
+        start_date: date,
+        end_date: date,
+        assigned_outlets: tuple[str, ...],
+    ) -> ArticleSearchResult:
+        """
+        List dated headlines for a period, optionally narrowed by a query.
         """
 
     def read_article(
@@ -83,6 +95,8 @@ class RequestState:
     final_answer: str | None = None
     writer_calls: int = 0
     reusing_research: bool = False
+    event_options: dict[int, EventCandidate] = field(default_factory=dict)
+    events_window: tuple[date, date] | None = None
     research_slots: asyncio.Semaphore = field(init=False)
     findings: dict[SourceGroup, list[ResearcherFindings]] = field(
         default_factory=lambda: {group: [] for group in SourceGroup}

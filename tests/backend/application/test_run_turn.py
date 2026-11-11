@@ -10,14 +10,16 @@ import pytest
 import asyncio
 
 from typing import Any
+from datetime import date
 from openai import APIConnectionError
 
 from backend.agents.lead.tools import check_brief
 from backend.application.settings import Settings
+from backend.application.evidence.outlet_assignments import outlet_display_name
 from backend.application.turn.run_turn import run_turn
 from backend.agents.researcher_findings import SourceGroup
 from backend.interfaces.http.chat_contracts import ChatMessage
-from backend.sources.access import ArticleReadResult, SourceAccessOutcome
+from backend.sources.access import ArticleCandidate, ArticleReadResult, SourceAccessOutcome
 from support.scripted_model import (
     FinalOutput,
     ModelCall,
@@ -791,3 +793,246 @@ async def test_writer_failure_is_a_recorded_failed_call_and_the_turn_ends_plainl
         record.tool == "write_answer" and record.outcome == "failure"
         for record in result.tool_calls
     )
+
+
+def quake_headlines() -> list[ArticleCandidate]:
+    """
+    Build headlines in which one event is reported by three outlets and one by two.
+    """
+    day = date(2026, 11, 6)
+    return [
+        ArticleCandidate(outlet_id=o, url=f"https://{o}.example/{n}", title=t, published_at=day)
+        for n, (o, t) in enumerate([
+            ("npr", "Powerful earthquake strikes coastal Turkey city"),
+            ("fox", "Earthquake strikes Turkey coastal city, dozens dead"),
+            ("cbs", "Turkey earthquake: rescuers search coastal city"),
+            ("nbc", "Election results announced in Brazil runoff"),
+            ("nypost", "Brazil runoff election results announced"),
+            ("npr", "Local school board votes on budget"),
+        ])
+    ]
+
+
+def offer_events(event_ids: list[int], replies: list[list[int]] | None = None):
+    """
+    Build a Lead script: search for events, then offer the given ones.
+    """
+
+    def reply(call: ModelCall):
+        """
+        Search first; then offer ids, using one wrong attempt per entry in replies.
+        """
+        if not call.tool_results:
+            return ToolCalls(
+                [("search_recent_events", {"topic": None, "start_date": None, "end_date": None})]
+            )
+        attempts = len([i for i in call.input_items if i.get("role") == "user"]) - 1
+        ids = (replies or [])[attempts] if replies and attempts < len(replies) else event_ids
+        return FinalOutput({
+            "brief": {
+                "status": "needs_clarification", "event": "",
+                "clarifying_question": "Which of these events should I compare?",
+            },
+            "event_ids": ids,
+        })
+
+    return reply
+
+
+async def test_recent_events_are_offered_with_attribution_dates_and_the_rule(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    The reader gets only events several outlets reported, rendered by code from real headlines.
+    """
+    fake_sources.headlines = quake_headlines()
+    scenario = Scenario()
+    scenario.lead_reply = offer_events([1, 2])
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert "Which of these events should I compare?" in result.answer
+    npr, fox, cbs = (outlet_display_name(o) for o in ("npr", "fox", "cbs"))
+    assert f"1. {npr} headline: “Powerful earthquake strikes coastal Turkey city”" in result.answer
+    assert f"Also reported by {fox}, {cbs}." in result.answer
+    assert "(Nov 6)" in result.answer
+    assert "Selection rule: international events that at least two approved outlets" in result.answer
+    assert "Only 2 events met this rule, so fewer than 5 are shown." in result.answer
+    assert "school board" not in result.answer
+    assert fake_sources.headline_calls[0]["query"] == ""
+    assert any(r.tool == "search_recent_events" and r.outcome == "success" for r in result.tool_calls)
+
+
+async def test_lead_cannot_offer_an_event_the_search_did_not_find(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    An invented event ID is sent back once, and the corrected offer is used.
+    """
+    fake_sources.headlines = quake_headlines()
+    scenario = Scenario()
+    scenario.lead_reply = offer_events([2], replies=[[9]])
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert "Brazil" in result.answer and "1." in result.answer
+    assert "Turkey" not in result.answer
+
+
+async def test_no_events_found_is_explained_instead_of_invented(make_state, fake_sources) -> None:
+    """
+    With no multi-outlet events, the answer states the rule and that nothing is offered.
+    """
+    scenario = Scenario()
+    scenario.lead_reply = offer_events([])
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert "No events met this rule, so none are offered." in result.answer
+
+
+async def test_event_discovery_failure_is_recorded_and_offers_nothing(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    A source crash fails the call and the reader is not shown events from nowhere.
+    """
+    def crash(*args: object) -> None:
+        """
+        Fail like a broken source layer.
+        """
+        raise RuntimeError("feed parser crashed")
+
+    fake_sources.discover_headlines = crash
+    scenario = Scenario()
+    scenario.lead_reply = offer_events([])
+    state = make_state()
+
+    result = await run_turn(MESSAGES, state, scenario.model)
+
+    assert any(r.tool == "search_recent_events" and r.outcome == "failure" for r in result.tool_calls)
+    assert state.events_window is None
+    assert "Selection rule" not in result.answer
+
+
+async def test_a_chosen_event_goes_through_the_normal_research_flow(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    After events are offered, the reader's pick starts the usual two-group comparison.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    fan_out = scenario.lead_reply
+
+    def search_then_research(call: ModelCall):
+        """
+        Search for events first, then follow the standard fan-out script.
+        """
+        if not call.tool_results:
+            return ToolCalls(
+                [("search_recent_events", {"topic": "Paris protests", "start_date": None, "end_date": None})]
+            )
+        return fan_out(ModelCall(call.system_instructions, call.input_items[:1], call.tool_names))
+
+    scenario.lead_reply = search_then_research
+    fake_sources.headlines = quake_headlines()
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert "## Sources" in result.answer
+    assert fake_sources.headline_calls[0]["query"] == "Paris protests"
+
+
+def detailed_report(liberal_article, conservative_article) -> dict[str, Any]:
+    """
+    Build a Writer report with the extra sections of a detailed report.
+    """
+    report = writer_report(liberal_article, conservative_article)
+    report["accounts"] = [{
+        "text": "A police spokesperson said officers responded to violence.",
+        "passage_ids": [conservative_article.passages[0].passage_id],
+    }]
+    report["discrepancies"] = [{
+        "text": "The outlets gave different crowd estimates.",
+        "passage_ids": [liberal_article.passages[1].passage_id],
+    }]
+    report["timeline"] = [{
+        "text": "The protests began on Saturday.",
+        "passage_ids": [liberal_article.passages[0].passage_id],
+    }]
+    return report
+
+
+def write_detailed_from_saved_research(articles):
+    """
+    Build a Lead script that writes a detailed report with no new research.
+    """
+    alignment = alignment_for(articles["npr"], articles["fox"])
+
+    def reply(call: ModelCall):
+        """
+        Write once with detailed=true, then finish.
+        """
+        if not call.tool_results:
+            return ToolCalls([("write_answer", {
+                "question": "Give me a detailed report.", "alignment": alignment, "detailed": True,
+            })])
+        return FinalOutput(lead_outcome())
+
+    return reply
+
+
+async def test_detailed_report_reuses_saved_research_and_adds_sections(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    A follow-up detailed request adds depth from saved evidence without new searches.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    first = await run_turn(MESSAGES, make_state(), scenario.model)
+    searches_before = len(fake_sources.search_calls)
+    scenario.lead_reply = write_detailed_from_saved_research(articles)
+    scenario.writer_replies = [detailed_report(articles["npr"], articles["fox"])]
+
+    second = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert "## Attributed accounts" not in first.answer
+    for heading in ("What the coverage reports", "Attributed accounts",
+                    "Reporting discrepancies", "Timeline", "Limitations", "Sources"):
+        assert f"## {heading}" in second.answer
+    assert len(fake_sources.search_calls) == searches_before
+    assert "Report type: detailed" in scenario.writer_calls[-1].input_text
+
+
+async def test_a_briefing_cannot_carry_detailed_sections(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    The Writer is corrected once when a briefing includes detailed-only sections.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    scenario.writer_replies = [
+        detailed_report(articles["npr"], articles["fox"]),
+        writer_report(articles["npr"], articles["fox"]),
+    ]
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    assert result.failure is None
+    assert len(scenario.writer_calls) == 2
+    assert "## Timeline" not in result.answer

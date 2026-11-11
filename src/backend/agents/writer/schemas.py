@@ -22,11 +22,16 @@ class Claim(BaseModel):
 class WriterReport(BaseModel):
     """
     The Writer's findings: a summary, shared ground, and differences.
+
+    A detailed report may add attributed accounts, reporting discrepancies, and a timeline.
     """
 
     summary: list[Claim] = Field(default_factory=list)
     overlap: list[Claim] = Field(default_factory=list)
     differences: list[Claim] = Field(default_factory=list)
+    accounts: list[Claim] = Field(default_factory=list)
+    discrepancies: list[Claim] = Field(default_factory=list)
+    timeline: list[Claim] = Field(default_factory=list)
     evidence_gap: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")

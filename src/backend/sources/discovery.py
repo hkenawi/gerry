@@ -60,7 +60,11 @@ def build_discovery_urls(
 
 
 def _matches_query(title: str, snippet: str, query: str) -> bool:
-    """Match event terms without requiring date words or generic comparison phrasing."""
+    """Match event terms without requiring date words or generic comparison phrasing.
+
+    A blank query matches every entry, for listing headlines in a period."""
+    if not query.strip():
+        return True
     ignored: frozenset[str] = frozenset({
         "the", "and", "for", "with", "about", "coverage", "compare", "news",
         "event", "from", "between",

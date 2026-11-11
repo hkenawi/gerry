@@ -7,7 +7,7 @@ application reports patterns in the retrieved sample. An inaccessible article,
 a thin sample, and an aspect absent from the articles are different findings
 with different implications.
 
-This guide describes the current Phase 4 implementation. For the changes that
+This guide describes the current implementation through Phase 6 (backend). For the changes that
 produced this layout, see the [simplification log](SIMPLIFICATION_LOG.md). For
 future scope and earlier design decisions, see the [implementation plan](IMPLEMENTATION_PLAN.md)
 and [product decision record](GRILLING_SESSION_SUMMARY.md).
@@ -172,7 +172,11 @@ recorder. Gerry passes that state to the SDK as Python run context and supplies
 model input explicitly for each agent. There is no SDK `session=` in the
 runner call. Server-side continuity comes from the app's transcript and
 research records. In-memory data is local to one backend process and disappears
-when that process exits. [Store](../src/backend/infrastructure/persistence/memory.py) ·
+when that process exits. To bound memory, the store keeps the 100 most recently used
+conversations and drops the oldest finished one, with its request records, when a
+new conversation exceeds the cap. A conversation with a running turn is never
+dropped, and a reader who returns to a dropped one is told to start a new chat. The
+HTTP layer likewise keeps only the latest 100 progress streams. [Store](../src/backend/infrastructure/persistence/memory.py) ·
 [Request state](../src/backend/application/turn/request_state.py)
 
 ## 5. End-to-end agent workflow
@@ -204,10 +208,11 @@ flowchart TD
 `run_turn()` builds a Lead agent with the current date in its instructions
 and passes the validated visible history as model input. The Lead's output
 schema wraps a `ResearchBrief`. A clarification brief requires a question.
-A clear brief requires a start and end date in order.
+A clear brief requires a start and end date in order. The output can also carry up
+to five `event_ids`, described below.
 
-The Lead can call `research_liberal_coverage`, `research_conservative_coverage`,
-and `write_answer`. They are SDK function tools implemented as Python wrappers
+The Lead can call `search_recent_events`, `research_liberal_coverage`,
+`research_conservative_coverage`, and `write_answer`. They are SDK function tools implemented as Python wrappers
 that start nested runs. The Lead retains control of the overall turn and receives
 the results of its calls. Each wrapper gets `RequestState` through SDK context.
 
@@ -260,6 +265,24 @@ for follow-ups. [Researcher agent](../src/backend/agents/researcher/agent.py) ·
 
 ### Writer and answer policy
 
+### Finding an event
+
+A reader who has not named an event can get five to choose from.
+`search_recent_events` takes an optional topic and period, defaulting to the past
+seven days and capped at 31 days. It lists dated headlines from all ten feeds
+through `discover_headlines()`, a blank-query form of source discovery. It groups
+headlines that share distinctive words and keeps events reported by at least two
+distinct outlets, ordered by outlet count, at most twelve. Undated headlines are
+left out. The Lead chooses up to five international events by ID. A finish that names
+an ID the search did not return is sent back for correction. Code renders the
+numbered list from the stored headlines, attributed to each outlet with dates, plus
+the selection rule and a note when fewer than five qualify, or that none did. The
+list is saved as the assistant's answer, so the reader's pick arrives as the next
+message. The same tool with a topic and dates also resolves an ambiguous event. The
+search uses one unit of the shared search budget, and its failures are recorded.
+
+### Briefing and detailed report
+
 The Lead calls `write_answer` with the reader's question and an alignment
 table. Each row labels an aspect as a central focus, a passing mention, or
 absent in each group's sample. Central and
@@ -281,6 +304,13 @@ saved article passages. Its one tool, `read_collected_article`, looks up a saved
 article by ID in the current conversation. It can return metadata such as
 bylines and publication dates along with the passages. It does not contact a
 publisher.
+
+With `detailed` set, which the Lead does when the reader asks for a full report or
+more depth, the Writer may also return attributed accounts, reporting discrepancies,
+and a timeline. A briefing rejects those lists, and a one-sided sample rejects
+discrepancies. The renderer adds them as sections and the briefing stays complete
+either way. A follow-up for a detailed report reuses the saved findings and runs
+targeted research only for a gap.
 
 The Writer returns a report with cited summary claims and, when allowed,
 overlap and differences. It can instead request a specific evidence gap.
@@ -481,5 +511,4 @@ establish current availability at individual publishers.
 The current workflow centers on a specified event with bounded publication
 dates and follow-up questions about that event. Historical discovery is bounded
 and publisher-specific. The implementation uses one process-local store for
-sessions. Recent-event suggestions, durable multi-instance storage, and
-deployment validation belong to later phases in the [implementation plan](IMPLEMENTATION_PLAN.md).
+sessions. Durable multi-instance storage and deployment validation belong to later phases in the [implementation plan](IMPLEMENTATION_PLAN.md).
