@@ -95,6 +95,7 @@ class RequestState:
     final_answer: str | None = None
     writer_calls: int = 0
     reusing_research: bool = False
+    previous_answers: tuple[str, ...] = ()
     event_options: dict[int, EventCandidate] = field(default_factory=dict)
     events_window: tuple[date, date] | None = None
     research_slots: asyncio.Semaphore = field(init=False)

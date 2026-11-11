@@ -87,6 +87,8 @@ main {
   text-transform: uppercase;
 }
 
+.edition[hidden] { display: none; }
+
 .front-page {
   display: grid;
   grid-template-columns: minmax(0, 1.75fr) minmax(260px, 1fr);
@@ -286,7 +288,8 @@ summary:focus-visible,
 
 .story-title { font: 27px/1.06 var(--serif); }
 
-.story-context {
+.story-context,
+.story-note {
   color: var(--muted-ink);
   font: 13px/1.4 Georgia, serif;
 }
@@ -365,7 +368,10 @@ summary:focus-visible,
 
 .research-sources + .research-tools { margin-top: 0; }
 .research-tools ol { padding-inline-start: 24px; }
-.research-tools li { overflow-wrap: anywhere; }
+.research-tools li {
+  padding-inline-start: 12px;
+  overflow-wrap: anywhere;
+}
 .research-tools li + li { margin-top: 8px; }
 .research-tools li span,
 .research-tools li p { color: var(--muted-ink); }

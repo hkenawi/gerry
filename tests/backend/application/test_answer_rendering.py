@@ -79,6 +79,7 @@ def test_claims_render_with_numbered_citations_and_a_source_list(
         assessment=assess((liberal,), (conservative,)),
         articles=(liberal, conservative),
         failed_reads=[],
+        detailed=True,
     )
 
     assert "Protesters gathered in Paris. [1]" in answer
@@ -133,6 +134,7 @@ def test_limitations_state_failed_articles_and_unequal_samples(
         assessment=assess((liberal_a, liberal_b, liberal_c), (conservative,)),
         articles=(liberal_a, liberal_b, liberal_c, conservative),
         failed_reads=[SourceAccessOutcome(outlet_id="nypost", status="paywall")],
+        detailed=True,
     )
 
     assert "3 liberal articles from 3 outlets" in answer
@@ -158,6 +160,7 @@ def test_opinion_articles_are_labelled_in_the_source_list(make_article) -> None:
         assessment=assess((liberal,), (conservative,)),
         articles=(liberal, conservative),
         failed_reads=[],
+        detailed=True,
     )
 
     assert "(opinion)" in answer

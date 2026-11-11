@@ -4,8 +4,8 @@ The HTTP response includes these records, and the recorder can notify a
 listener when a tool finishes so the progress stream can report it."""
 
 from enum import StrEnum
-from pydantic import BaseModel
 from collections.abc import Callable
+from pydantic import BaseModel, JsonValue
 
 
 class ToolCallOutcome(StrEnum):
@@ -26,6 +26,8 @@ class ToolCallRecord(BaseModel):
     tool: str
     outcome: ToolCallOutcome
     error: str | None = None
+    args: dict[str, JsonValue] | None = None
+    result: str | None = None
 
 
 class ToolCallRecorder:
@@ -53,12 +55,15 @@ class ToolCallRecorder:
         tool: str,
         outcome: ToolCallOutcome,
         error: str | None = None,
+        *,
+        args: dict[str, JsonValue] | None = None,
+        result: str | None = None,
     ) -> None:
         """
         Append one call attributed to the agent that made it.
         """
         record: ToolCallRecord = ToolCallRecord(
-            agent=agent, tool=tool, outcome=outcome, error=error,
+            agent=agent, tool=tool, outcome=outcome, error=error, args=args, result=result,
         )
         self._records.append(record)
         if self._on_record is not None:

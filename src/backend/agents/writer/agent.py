@@ -26,6 +26,7 @@ from backend.application.answer.sample_assessment import SampleAssessment
 PROMPT: str = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8")
 WRITER_AGENT_NAME: str = "writer"
 WRITER_MAX_TURNS: int = 4
+MISSING_COLLECTED_ARTICLE: str = "That article was not collected in this conversation."
 
 
 @function_tool
@@ -49,13 +50,17 @@ async def read_collected_article(
             WRITER_AGENT_NAME,
             "read_collected_article",
             ToolCallOutcome.FAILURE,
-            "That article was not collected in this conversation.",
+            MISSING_COLLECTED_ARTICLE,
+            args={"article_id": article_id},
+            result=MISSING_COLLECTED_ARTICLE,
         )
-        return "That article was not collected in this conversation."
+        return MISSING_COLLECTED_ARTICLE
+    result: str = article.model_dump_json()
     state.recorder.record(
-        WRITER_AGENT_NAME, "read_collected_article", ToolCallOutcome.SUCCESS
+        WRITER_AGENT_NAME, "read_collected_article", ToolCallOutcome.SUCCESS,
+        args={"article_id": article_id}, result=result,
     )
-    return article.model_dump_json()
+    return result
 
 
 def build_writer_agent(
@@ -99,13 +104,20 @@ def build_writer_input(
     findings: list[ResearcherFindings],
     articles: tuple[ArticleRecord, ...],
     detailed: bool = False,
+    *,
+    previous_answers: tuple[str, ...] = (),
 ) -> str:
-    """
-    Assemble the evidence package the Writer works from.
-    """
+    """Assemble the evidence and any prior answers the Writer should expand on."""
+    report_type: str = "detailed" if detailed else "briefing"
+    prior_context: str = ""
+    if previous_answers:
+        report_type = "follow-up"
+        prior_context = (
+            "\n\nPreviously shown answers:\n" + json.dumps(previous_answers)
+        )
     return (
         f"Reader's question: {question}\n"
-        f"Report type: {'detailed' if detailed else 'briefing'}\n"
+        f"Report type: {report_type}\n"
         f"Event: {brief.event}\n"
         f"Answer mode: {assessment.mode.value}\n"
         f"Mode reason: {assessment.reason or 'none'}\n"
@@ -116,4 +128,5 @@ def build_writer_input(
         + json.dumps([item.model_dump(mode="json") for item in findings])
         + "\n\nCollected articles:\n"
         + describe_evidence(articles)
+        + prior_context
     )

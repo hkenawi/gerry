@@ -13,11 +13,19 @@ from datetime import date
 from agents.models.interface import Model
 from agents.exceptions import ModelBehaviorError
 from openai.types.responses import ResponseFunctionToolCall
-from agents import Agent, AgentHooks, ModelResponse, ModelSettings, RunContextWrapper
+from agents import (
+    Agent,
+    AgentHooks,
+    ModelResponse,
+    ModelSettings,
+    RunContextWrapper,
+    Tool,
+)
 
 from backend.agents.lead.schemas import LeadOutcome
 from backend.agents.researcher_findings import SourceGroup
 from backend.application.turn.request_state import RequestState
+from backend.application.evidence.recent_events import start_of_month_window
 from backend.agents.lead.tools import (
     WRITE_TOOL_NAME,
     EVENTS_TOOL_NAME,
@@ -71,11 +79,17 @@ def build_lead_agent(
     model: Model,
     model_settings: ModelSettings | None,
     today: date,
+    *,
+    allow_event_discovery: bool = True,
 ) -> Agent[RequestState]:
     """
     Build the Lead with one research tool per group and the Writer tool.
     """
-    instructions: str = f"{PROMPT}\nToday's date is {today.isoformat()}."
+    instructions: str = (
+        f"{PROMPT}\nToday's date is {today.isoformat()}. "
+        f"The default publication window is {start_of_month_window(today).isoformat()} "
+        f"through {today.isoformat()}, inclusive."
+    )
     if state.reusing_research and state.brief is not None:
         saved_findings: str = json.dumps([
             item.model_dump(mode="json")
@@ -89,17 +103,19 @@ def build_lead_agent(
             f"Saved brief: {state.brief.model_dump_json()}\n"
             f"Saved findings: {saved_findings}"
         )
+    tools: list[Tool] = [
+        build_research_tool(SourceGroup.LIBERAL, model, model_settings, today),
+        build_research_tool(SourceGroup.CONSERVATIVE, model, model_settings, today),
+        build_writer_tool(model, model_settings),
+    ]
+    if allow_event_discovery:
+        tools.insert(0, build_events_tool(today))
     return Agent(
         name="lead",
         instructions=instructions,
         model=model,
         model_settings=model_settings or ModelSettings(),
         hooks=LeadToolBatchHooks(),
-        tools=[
-            build_events_tool(),
-            build_research_tool(SourceGroup.LIBERAL, model, model_settings),
-            build_research_tool(SourceGroup.CONSERVATIVE, model, model_settings),
-            build_writer_tool(model, model_settings),
-        ],
+        tools=tools,
         output_type=LeadOutcome,
     )

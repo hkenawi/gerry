@@ -64,7 +64,7 @@ class GroupSourceTools:
                 SourceAccessStatus.BUDGET_EXHAUSTED,
                 "The search budget for this request is used up.",
             )
-        self._record_search(result)
+        self._record_search(query, result)
         return result
 
     def _build_search_failure(
@@ -93,7 +93,9 @@ class GroupSourceTools:
                         url=url,
                         detail="This outlet is not assigned to this researcher.",
                     )
-                )
+                ),
+                url,
+                outlet_id,
             )
         result: ArticleReadResult | None = None
         for _ in range(self._state.settings.max_retries + 1):
@@ -119,9 +121,11 @@ class GroupSourceTools:
             if result.outcome.status is not SourceAccessStatus.FETCH_FAILED:
                 break
         assert result is not None
-        return self._finish_read(result)
+        return self._finish_read(result, url, outlet_id)
 
-    def _finish_read(self, result: ArticleReadResult) -> ArticleReadResult:
+    def _finish_read(
+        self, result: ArticleReadResult, url: str, outlet_id: str,
+    ) -> ArticleReadResult:
         """
         Record the final read outcome and remember failures for the answer.
         """
@@ -133,10 +137,12 @@ class GroupSourceTools:
             "read_article",
             ToolCallOutcome.SUCCESS if succeeded else ToolCallOutcome.FAILURE,
             None if succeeded else self._describe(result.outcome),
+            args={"url": url, "outlet_id": outlet_id},
+            result=result.model_dump_json(),
         )
         return result
 
-    def _record_search(self, result: ArticleSearchResult) -> None:
+    def _record_search(self, query: str, result: ArticleSearchResult) -> None:
         """
         Record a search as successful when at least one outlet answered.
         """
@@ -150,6 +156,8 @@ class GroupSourceTools:
             "search_articles",
             ToolCallOutcome.SUCCESS if succeeded else ToolCallOutcome.FAILURE,
             None if succeeded else "No outlet could be searched.",
+            args={"query": query},
+            result=result.model_dump_json(),
         )
 
     @staticmethod

@@ -10,6 +10,13 @@ from typing import Self
 from pydantic import Field, BaseModel, model_validator
 
 
+class PassageQuote(BaseModel):
+    """A verbatim excerpt from one supporting passage."""
+
+    text: str = Field(min_length=1)
+    passage_id: str = Field(min_length=1)
+
+
 class Claim(BaseModel):
     """
     One statement of fact or comparison with its supporting passages.
@@ -17,6 +24,7 @@ class Claim(BaseModel):
 
     text: str = Field(min_length=1)
     passage_ids: list[str] = Field(min_length=1)
+    quotes: list[PassageQuote] = Field(default_factory=list)
 
 
 class WriterReport(BaseModel):

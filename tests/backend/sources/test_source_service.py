@@ -126,10 +126,8 @@ async def test_turn_uses_real_source_discovery_extraction_and_evidence_storage()
     )
 
     assert result.failure is None
-    assert "## Where coverage overlaps" in result.answer
-    assert "## Where coverage differs" not in result.answer
-    assert "2 liberal articles from 2 outlets and 2 conservative articles from 2 outlets" in result.answer
-    assert all(url in result.answer for url in urls)
+    assert result.answer == "Both groups reported rescue work after the earthquake."
+    assert {article.canonical_url for article in state.store.list_articles(state.conversation_id)} == set(urls)
 
 
 def build_store() -> tuple[InMemoryStore, str]:

@@ -32,6 +32,7 @@ from backend.application.answer.sample_assessment import (
 )
 from backend.application.answer.answer_rendering import (
     render_answer,
+    render_followup,
     find_report_problems,
     find_alignment_problems,
     render_no_evidence_answer,
@@ -98,11 +99,25 @@ async def write_answer(
         article for group in SourceGroup for article in articles_by_group[group]
     )
     known_passage_ids: set[str] = set().union(*passage_ids_by_group.values())
+    passage_texts: dict[str, str] = {
+        passage.passage_id: " ".join(passage.text.split())
+        for article in articles
+        for passage in article.passages
+    }
+    previous_answers: tuple[str, ...] = (
+        state.previous_answers if detailed and state.reusing_research else ()
+    )
 
     def validate(report: WriterReport) -> str | None:
         """Reject claims with unknown citations or outside the answer mode."""
         return " ".join(
-            find_report_problems(report, known_passage_ids, assessment, detailed)
+            find_report_problems(
+                report,
+                known_passage_ids,
+                assessment,
+                detailed,
+                passage_texts=passage_texts,
+            )
         ) or None
 
     writer_input: str = build_writer_input(
@@ -113,6 +128,7 @@ async def write_answer(
         [item for items in state.findings.values() for item in items],
         articles,
         detailed,
+        previous_answers=previous_answers,
     )
     report: WriterReport | None
     problem: str | None
@@ -133,13 +149,23 @@ async def write_answer(
         return refuse(problem or "The Writer could not produce a valid answer.")
     if report.evidence_gap:
         return refuse(f"The Writer needs more evidence. {report.evidence_gap}")
-    state.final_answer = render_answer(
-        report,
-        alignment,
-        assessment,
-        articles,
-        state.failed_reads,
-    )
+    if previous_answers:
+        state.final_answer = render_followup(
+            report,
+            assessment,
+            articles,
+            state.failed_reads,
+            previous_answers,
+        )
+    else:
+        state.final_answer = render_answer(
+            report,
+            alignment,
+            assessment,
+            articles,
+            state.failed_reads,
+            detailed=detailed,
+        )
     return WriteResult(
         True,
         json.dumps({"status": "ok", "mode": assessment.mode.value}),

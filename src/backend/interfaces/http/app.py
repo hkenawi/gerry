@@ -10,11 +10,11 @@ import logging
 
 from pathlib import Path
 from agents import ModelSettings
-from datetime import UTC, datetime
-from fastapi import FastAPI, Request
 from agents.models.interface import Model
 from collections.abc import AsyncIterator
 from fastapi.staticfiles import StaticFiles
+from datetime import UTC, date, datetime
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -22,6 +22,13 @@ from backend.application.settings import Settings
 from backend.application.turn.run_turn import TurnResult, run_turn
 from backend.interfaces.http.chat_contracts import ChatRequest, ChatResponse
 from backend.application.turn.tool_calls import ToolCallOutcome, ToolCallRecord
+from backend.application.evidence.outlet_assignments import outlet_display_name
+from backend.interfaces.http.recent_event_contracts import RecentEdition, RecentStory
+from backend.application.evidence.recent_events import (
+    EventCandidate,
+    discover_events,
+    start_of_month_window,
+)
 from backend.application.turn.request_state import (
     RequestState,
     SourceGateway,
@@ -48,6 +55,8 @@ from backend.infrastructure.persistence.memory import (
 
 logger: logging.Logger = logging.getLogger(__name__)
 MAX_PROGRESS_STREAMS: int = 100
+RECENT_EDITION_LIMIT: int = 5
+RECENT_EDITION_TTL_SECONDS: int = 600
 FRONTEND_DIRECTORY: Path = Path(__file__).resolve().parents[3] / "frontend"
 
 
@@ -84,6 +93,9 @@ def create_http_app(
     """Serve the browser UI and connect chat to the shared workflow and store."""
     app: FastAPI = FastAPI(title="Gerry")
     progress: dict[str, list[ProgressEvent]] = {}
+    edition: RecentEdition | None = None
+    edition_expires_at: float = 0.0
+    edition_lock: asyncio.Lock = asyncio.Lock()
     app.mount("/static", StaticFiles(directory=FRONTEND_DIRECTORY / "static"))
 
     @app.get("/", include_in_schema=False)
@@ -110,6 +122,45 @@ def create_http_app(
     async def report_health() -> dict[str, str]:
         """Report that the backend can receive requests."""
         return {"status": "ok"}
+
+    @app.get("/recent-events")
+    async def serve_recent_events() -> RecentEdition:
+        """Refresh the front-page edition from approved publishers without a model call."""
+        nonlocal edition, edition_expires_at
+        async with edition_lock:
+            end: date = datetime.now(UTC).date()
+            if (
+                edition is not None
+                and edition.end_date == end
+                and time.monotonic() < edition_expires_at
+            ):
+                return edition
+            start: date = start_of_month_window(end)
+            try:
+                events: tuple[EventCandidate, ...] = await asyncio.to_thread(
+                    discover_events, sources.discover_headlines, "", start, end,
+                    RECENT_EDITION_LIMIT,
+                )
+            except Exception as error:
+                logger.error("Recent edition discovery failed (%s).", type(error).__name__)
+                raise HTTPException(503, "Recent stories could not be loaded.") from error
+            edition = RecentEdition(
+                start_date=start,
+                end_date=end,
+                events=[
+                    RecentStory(
+                        headline=event.headline,
+                        headline_outlet=outlet_display_name(event.headline_outlet),
+                        reported_by=[outlet_display_name(outlet) for outlet in event.outlet_ids],
+                        first_date=event.first_date,
+                        last_date=event.last_date,
+                        snippet=event.snippet,
+                    )
+                    for event in events
+                ],
+            )
+            edition_expires_at = time.monotonic() + RECENT_EDITION_TTL_SECONDS
+            return edition
 
     @app.post("/chat", response_model=ChatResponse)
     async def handle_chat(request: ChatRequest) -> JSONResponse:

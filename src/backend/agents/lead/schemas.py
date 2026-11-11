@@ -57,7 +57,7 @@ class LeadOutcome(BaseModel):
     The Lead's final output: the brief, clear or needing clarification.
 
     The aspect alignment is passed to the Writer tool, not returned here.
-    ``event_ids`` chooses which found events to offer the reader, at most five.
+    ``event_ids`` ranks discovered events for the reader. The renderer shows up to three.
     """
 
     brief: ResearchBrief

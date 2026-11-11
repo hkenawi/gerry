@@ -11,6 +11,7 @@ import asyncio
 
 from collections.abc import Callable
 from openai import APIConnectionError
+from datetime import UTC, date, datetime, timedelta
 from lxml.html import HtmlElement, fromstring
 from httpx import Response, AsyncClient, ASGITransport
 
@@ -18,10 +19,13 @@ from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
 from backend.application.settings import Settings
 from backend.application.composition import build_app
+from backend.interfaces.http.app import create_http_app
 from backend.infrastructure.persistence import InMemoryStore
 from backend.agents.researcher_findings import ResearcherFindings
+from backend.application.turn.request_state import SourceGateway
 from backend.interfaces.http.chat_contracts import ChatRequest, ChatResponse
 from support.scripted_model import FinalOutput, ModelCall, ScriptedModel, ToolCalls
+from backend.sources.access import ArticleCandidate, ArticleSearchResult, SourceAccessOutcome
 
 
 def clarify(call: ModelCall) -> FinalOutput:
@@ -75,19 +79,93 @@ async def test_home_serves_the_chat_page_and_its_assets() -> None:
     assert stylesheet.headers["content-type"].startswith("text/css")
 
 
-async def test_front_page_offers_five_stories_for_comparison() -> None:
-    """Read the masthead and find five story buttons alongside the question form."""
+async def test_front_page_has_a_live_stories_region_and_question_form() -> None:
+    """Read the masthead and find the region for discovered stories and the form."""
     async with build_client() as client:
         page: Response = await client.get("/")
 
     front_page: HtmlElement = fromstring(page.text)
     masthead: HtmlElement = front_page.xpath("//header")[0]
-    stories: list[HtmlElement] = front_page.xpath("//aside//button[@type='button']")
 
     assert masthead.xpath("normalize-space(.//h1)") == "Gerry"
     assert "the Manderer" in masthead.text_content()
-    assert len(stories) == 5
+    assert len(front_page.xpath("//aside//ul[@id='story-list']")) == 1
+    assert not front_page.xpath("//aside//button[@data-question]")
     assert len(front_page.xpath("//main//form//textarea")) == 1
+
+
+async def test_recent_stories_are_discovered_without_using_the_model(
+    fake_sources: SourceGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Return dated multi-outlet stories for the front page without a chat turn."""
+    today: date = datetime.now(UTC).date()
+    headlines: list[ArticleCandidate] = [
+        ArticleCandidate(
+            outlet_id="npr", url="https://example.com/one",
+            title="Earthquake strikes coastal Turkey city", published_at=today,
+        ),
+        ArticleCandidate(
+            outlet_id="fox", url="https://example.com/two",
+            title="Powerful earthquake strikes coastal Turkey city", published_at=today,
+        ),
+        ArticleCandidate(
+            outlet_id="npr", url="https://example.com/three",
+            title="Local school board elects chair", published_at=today,
+        ),
+    ]
+    monkeypatch.setattr(fake_sources, "headlines", headlines)
+    model: ScriptedModel = ScriptedModel(clarify)
+    app = create_http_app(Settings(), model, InMemoryStore(), fake_sources)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response: Response = await client.get("/recent-events")
+
+    assert response.status_code == 200
+    edition: dict[str, object] = response.json()
+    previous_month_end: date = today.replace(day=1) - timedelta(days=1)
+    assert edition["start_date"] == previous_month_end.replace(
+        day=min(today.day, previous_month_end.day),
+    ).isoformat()
+    assert edition["end_date"] == today.isoformat()
+    assert edition["events"] == [{
+        "headline": "Earthquake strikes coastal Turkey city",
+        "headline_outlet": "NPR online news",
+        "reported_by": ["NPR online news", "Fox News Digital"],
+        "first_date": today.isoformat(),
+        "last_date": today.isoformat(),
+        "snippet": None,
+    }]
+    assert model.calls == []
+
+
+async def test_recent_stories_distinguish_unavailable_publishers_from_empty_edition(
+    fake_sources: SourceGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An outage allows a retry and a successful empty search remains a valid edition."""
+    original_discovery: Callable[[str, date, date, tuple[str, ...]], ArticleSearchResult]
+    original_discovery = fake_sources.discover_headlines
+
+    def unavailable(
+        query: str, start: date, end: date, outlets: tuple[str, ...],
+    ) -> ArticleSearchResult:
+        """Simulate every approved publisher failing to respond."""
+        return ArticleSearchResult(outcomes=tuple(
+            SourceAccessOutcome(outlet_id=outlet, status="fetch_failed")
+            for outlet in outlets
+        ))
+
+    monkeypatch.setattr(fake_sources, "discover_headlines", unavailable)
+    model: ScriptedModel = ScriptedModel(clarify)
+    app = create_http_app(Settings(), model, InMemoryStore(), fake_sources)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        failed: Response = await client.get("/recent-events")
+        monkeypatch.setattr(fake_sources, "discover_headlines", original_discovery)
+        retried: Response = await client.get("/recent-events")
+
+    assert failed.status_code == 503
+    assert retried.status_code == 200
+    assert retried.json()["events"] == []
 
 
 async def test_chat_runs_the_workflow_and_replays_the_first_turn() -> None:
@@ -265,7 +343,11 @@ async def test_chat_follow_up_can_reuse_saved_research(
             }]})
         assert "Earthquake rescue" in call.system_instructions
         if not call.tool_results:
-            return ToolCalls([("write_answer", {"question": "What did NPR report?", "alignment": []})])
+            return ToolCalls([("write_answer", {
+                "question": "What did NPR report? Include sources and excerpts.",
+                "alignment": [],
+                "detailed": True,
+            })])
         return FinalOutput({"brief": brief.model_dump(mode="json")})
 
     model: ScriptedModel = ScriptedModel(reply)
@@ -288,7 +370,7 @@ async def test_chat_follow_up_can_reuse_saved_research(
             "messages": [
                 {"role": "user", "content": "Compare earthquake coverage."},
                 {"role": "assistant", "content": "Here is the available coverage."},
-                {"role": "user", "content": "What did NPR report?"},
+                {"role": "user", "content": "What did NPR report? Include sources and excerpts."},
             ],
         })
 
@@ -297,6 +379,13 @@ async def test_chat_follow_up_can_reuse_saved_research(
     assert article.canonical_url in response.json()["answer"]
     assert "Paragraph 1" in response.json()["answer"]
     assert [call["tool"] for call in response.json()["tool_calls"]] == ["write_answer"]
+    tool_call: dict[str, object] = response.json()["tool_calls"][0]
+    assert tool_call["args"] == {
+        "question": "What did NPR report? Include sources and excerpts.",
+        "alignment": [],
+        "detailed": True,
+    }
+    assert tool_call["result"] == model.calls[-1].tool_results[0]
 
 
 async def test_model_outage_returns_a_retryable_503_that_is_replayed_and_not_stored() -> None:

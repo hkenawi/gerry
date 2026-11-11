@@ -10,8 +10,8 @@ import json
 import asyncio
 import logging
 
-from datetime import UTC, date, datetime, timedelta
-from pydantic import ValidationError
+from datetime import UTC, date, datetime
+from pydantic import JsonValue
 from agents.models.interface import Model
 from agents.exceptions import MaxTurnsExceeded
 from agents import FunctionTool, ModelSettings, RunContextWrapper, function_tool
@@ -22,8 +22,13 @@ from backend.application.turn.request_state import RequestState
 from backend.application.turn.tool_calls import ToolCallOutcome
 from backend.application.turn.request_budget import BudgetResource
 from backend.application.turn.structured_run import BudgetExceeded
-from backend.application.evidence.recent_events import cluster_events
-from backend.application.evidence.outlet_assignments import outlet_display_name, outlets_for_group
+from backend.application.evidence.outlet_assignments import outlet_display_name
+from backend.application.evidence.recent_events import (
+    EventCandidate,
+    discover_events,
+    normalize_event_topic,
+    start_of_month_window,
+)
 from backend.agents.research_brief import BriefStatus, ResearchBrief
 from backend.agents.researcher.agent import ResearcherOutcome, run_researcher
 from backend.application.answer.write_answer import WriteResult, write_answer
@@ -32,8 +37,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 LEAD_AGENT_NAME: str = "lead"
 WRITE_TOOL_NAME: str = "write_answer"
 EVENTS_TOOL_NAME: str = "search_recent_events"
-RECENT_EVENT_DAYS: int = 7
-MAX_EVENT_WINDOW_DAYS: int = 31
 RESEARCH_TOOL_NAMES: dict[SourceGroup, str] = {
     group: f"research_{group.value}_coverage" for group in SourceGroup
 }
@@ -42,23 +45,33 @@ RESEARCH_TOOL_NAMES: dict[SourceGroup, str] = {
 def check_brief(
     state: RequestState,
     event: str,
-    start_date: str,
-    end_date: str,
+    start_date: str | None,
+    end_date: str | None,
+    *,
+    today: date | None = None,
 ) -> tuple[tuple[date, date] | None, str | None]:
     """Validate the brief and fix the event and window on the first call."""
+    previous: ResearchBrief | None = state.brief
     try:
+        end: date = (
+            date.fromisoformat(end_date) if end_date is not None
+            else (previous.end_date if previous else None) or today or datetime.now(UTC).date()
+        )
+        start: date = (
+            date.fromisoformat(start_date) if start_date is not None
+            else (previous.start_date if previous else None) or start_of_month_window(end)
+        )
         brief: ResearchBrief = ResearchBrief.model_validate(
             {
                 "status": BriefStatus.CLEAR,
                 "event": event,
-                "start_date": start_date,
-                "end_date": end_date,
+                "start_date": start,
+                "end_date": end,
             }
         )
-    except ValidationError:
+    except ValueError:
         return None, "The event, start_date, and end_date were not a valid brief."
     assert brief.start_date is not None and brief.end_date is not None
-    previous: ResearchBrief | None = state.brief
     if previous is None:
         state.brief = brief
     elif (previous.start_date, previous.end_date) != (brief.start_date, brief.end_date):
@@ -68,10 +81,19 @@ def check_brief(
     return (brief.start_date, brief.end_date), None
 
 
-def reject_call(state: RequestState, tool_name: str, reason: str) -> str:
+def reject_call(
+    state: RequestState,
+    tool_name: str,
+    reason: str,
+    args: dict[str, JsonValue],
+) -> str:
     """Record a failed Lead tool call and explain it to the Lead."""
-    state.recorder.record(LEAD_AGENT_NAME, tool_name, ToolCallOutcome.FAILURE, reason)
-    return json.dumps({"status": "failed", "reason": reason})
+    result: str = json.dumps({"status": "failed", "reason": reason})
+    state.recorder.record(
+        LEAD_AGENT_NAME, tool_name, ToolCallOutcome.FAILURE, reason,
+        args=args, result=result,
+    )
+    return result
 
 
 async def find_events(
@@ -79,37 +101,48 @@ async def find_events(
     topic: str | None,
     start_date: str | None,
     end_date: str | None,
+    *,
+    today: date | None = None,
 ) -> str:
-    """Find events several approved outlets reported in a period, default the past week."""
+    """Find dated headlines in a period, newest first regardless of publisher count."""
+    args: dict[str, JsonValue] = {
+        "topic": topic, "start_date": start_date, "end_date": end_date,
+    }
+    query: str = normalize_event_topic(topic)
     try:
-        end: date = date.fromisoformat(end_date) if end_date else datetime.now(UTC).date()
+        end: date = (
+            date.fromisoformat(end_date) if end_date is not None
+            else today or datetime.now(UTC).date()
+        )
         start: date = (
-            date.fromisoformat(start_date) if start_date
-            else end - timedelta(days=RECENT_EVENT_DAYS)
+            date.fromisoformat(start_date) if start_date is not None
+            else start_of_month_window(end)
         )
     except ValueError:
-        return reject_call(state, EVENTS_TOOL_NAME, "Dates must be ISO dates.")
-    if not 0 <= (end - start).days <= MAX_EVENT_WINDOW_DAYS:
+        return reject_call(state, EVENTS_TOOL_NAME, "Dates must be ISO dates.", args)
+    if start > end:
         return reject_call(
             state, EVENTS_TOOL_NAME,
-            f"The period must run forward and span at most {MAX_EVENT_WINDOW_DAYS} days.",
+            "The start date must be on or before the end date.",
+            args,
         )
     if not state.budget.try_consume(BudgetResource.SEARCH_CALLS):
-        return reject_call(state, EVENTS_TOOL_NAME, "The search budget is used up.")
+        return reject_call(state, EVENTS_TOOL_NAME, "The search budget is used up.", args)
     try:
-        result = await asyncio.to_thread(
-            state.sources.discover_headlines, topic or "", start, end,
-            tuple(outlet for group in SourceGroup for outlet in outlets_for_group(group)),
+        events: tuple[EventCandidate, ...] = await asyncio.to_thread(
+            discover_events, state.sources.discover_headlines, query, start, end,
+            require_shared_coverage=False,
         )
     except Exception as error:
         logger.error("Event discovery failed (%s).", type(error).__name__)
-        return reject_call(state, EVENTS_TOOL_NAME, "Event discovery could not be completed.")
-    events = cluster_events(list(result.candidates))
+        return reject_call(
+            state, EVENTS_TOOL_NAME, "Event discovery could not be completed.", args,
+        )
     state.event_options = {event.event_id: event for event in events}
     state.events_window = (start, end)
-    state.recorder.record(LEAD_AGENT_NAME, EVENTS_TOOL_NAME, ToolCallOutcome.SUCCESS)
-    return json.dumps({
+    output: str = json.dumps({
         "status": "ok",
+        "search_query": query,
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
         "events": [
@@ -123,28 +156,38 @@ async def find_events(
             for event in events
         ],
     })
+    state.recorder.record(
+        LEAD_AGENT_NAME, EVENTS_TOOL_NAME, ToolCallOutcome.SUCCESS, args=args, result=output,
+    )
+    return output
 
 
 async def research_group(
     state: RequestState,
     group: SourceGroup,
     event: str,
-    start_date: str,
-    end_date: str,
+    start_date: str | None,
+    end_date: str | None,
     focus_question: str | None,
     model: Model,
     model_settings: ModelSettings | None,
+    *,
+    today: date,
 ) -> str:
     """Run a group research round and return findings or a failure as JSON."""
     tool_name: str = RESEARCH_TOOL_NAMES[group]
+    args: dict[str, JsonValue] = {
+        "event": event, "start_date": start_date, "end_date": end_date,
+        "focus_question": focus_question,
+    }
 
     def reject_research(reason: str | None) -> str:
         """Record the failed call and explain it to the Lead."""
-        return reject_call(state, tool_name, reason or "No findings were produced.")
+        return reject_call(state, tool_name, reason or "No findings were produced.", args)
 
     window: tuple[date, date] | None
     problem: str | None
-    window, problem = check_brief(state, event, start_date, end_date)
+    window, problem = check_brief(state, event, start_date, end_date, today=today)
     if problem is not None or window is None:
         return reject_research(problem)
     if not state.try_start_round(group):
@@ -174,13 +217,16 @@ async def research_group(
         return reject_research(outcome.failure)
 
     state.findings[group].append(outcome.findings)
-    state.recorder.record(LEAD_AGENT_NAME, tool_name, ToolCallOutcome.SUCCESS)
-    return json.dumps(
+    result: str = json.dumps(
         {"status": "ok", "findings": outcome.findings.model_dump(mode="json")}
     )
+    state.recorder.record(
+        LEAD_AGENT_NAME, tool_name, ToolCallOutcome.SUCCESS, args=args, result=result,
+    )
+    return result
 
 
-def build_events_tool() -> FunctionTool:
+def build_events_tool(today: date) -> FunctionTool:
     """Build the Lead's tool for finding events in a period."""
 
     async def run(
@@ -190,20 +236,22 @@ def build_events_tool() -> FunctionTool:
         end_date: str | None,
     ) -> str:
         """
-        Find international events that several approved outlets reported in a period.
+        Offer headlines when the reader is deciding what story to research.
 
         Args:
-            topic: Words narrowing the search, or null to list every event.
-            start_date: First publication date, ISO format, or null for seven days ago.
+            topic: Bare location or interest terms for the headline search, such as Paris.
+                Omit time phrases. Use null for an unrestricted search.
+            start_date: First publication date, ISO format, or null for one month before end_date.
             end_date: Last publication date, ISO format, or null for today."""
-        return await find_events(context.context, topic, start_date, end_date)
+        return await find_events(context.context, topic, start_date, end_date, today=today)
 
     return function_tool(
         run,
         name_override=EVENTS_TOOL_NAME,
         description_override=(
-            "List events that at least two approved outlets reported in a period. "
-            "Use it to offer recent events or to find which event a reader means."
+            "Offer headline choices for an open-ended update or an explicit request to "
+            "pick a story. For a named subject such as the Paris riots, start both "
+            "coverage research tools, including when the subject spans several months."
         ),
     )
 
@@ -212,23 +260,24 @@ def build_research_tool(
     group: SourceGroup,
     model: Model,
     model_settings: ModelSettings | None,
+    today: date,
 ) -> FunctionTool:
     """Build the Lead's research tool for one source group."""
 
     async def run(
         context: RunContextWrapper[RequestState],
         event: str,
-        start_date: str,
-        end_date: str,
+        start_date: str | None,
+        end_date: str | None,
         focus_question: str | None,
     ) -> str:
         """
-        Research how this group's outlets covered the event.
+        Research how this group's outlets covered a named event or series of events.
 
         Args:
-            event: The event to research, in plain words.
-            start_date: First publication date, ISO format, inclusive.
-            end_date: Last publication date, ISO format, inclusive.
+            event: The named subject to research, such as the Paris riots.
+            start_date: First publication date, ISO format, or null for the default.
+            end_date: Last publication date, ISO format, or null for the default.
             focus_question: A neutral follow-up question, or null for a broad pass."""
         return await research_group(
             context.context,
@@ -239,14 +288,16 @@ def build_research_tool(
             focus_question,
             model,
             model_settings,
+            today=today,
         )
 
     return function_tool(
         run,
         name_override=RESEARCH_TOOL_NAMES[group],
         description_override=(
-            f"Run a fresh {group.value} researcher over its assigned outlets "
-            "and return validated findings."
+            f"Research a named subject with a fresh {group.value} researcher. Use this "
+            "alongside the other group's tool for a specific event or series, preserving "
+            "the reader's full requested period."
         ),
     )
 
@@ -268,8 +319,10 @@ def build_writer_tool(
 
         Args:
             question: The reader's question, in plain words.
-            alignment: One row per aspect comparing the two groups' coverage.
-            detailed: True only when the reader asked for a detailed or full report."""
+            alignment: Comparison rows for a briefing or full report. Use an
+                empty list when expanding an earlier answer.
+            detailed: True when the reader asks for more detail, a full report,
+                sources, or excerpts."""
         state: RequestState = context.context
         result: WriteResult = await write_answer(
             state, model, model_settings, question, alignment, detailed
@@ -279,6 +332,12 @@ def build_writer_tool(
             WRITE_TOOL_NAME,
             ToolCallOutcome.SUCCESS if result.succeeded else ToolCallOutcome.FAILURE,
             None if result.succeeded else result.message,
+            args={
+                "question": question,
+                "alignment": [row.model_dump(mode="json") for row in alignment],
+                "detailed": detailed,
+            },
+            result=result.message,
         )
         return result.message
 
