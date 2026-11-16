@@ -1,51 +1,84 @@
-# Gerry
+# Gerry the Manderer
 
-Compare how selected liberal and conservative news outlets cover the same
-international event, with attribution and supporting evidence.
+## Table of contents
 
-The local app accepts research questions and follow-ups. It shows progress,
-comparison tables, and citations that open the corresponding source excerpts.
+- [Project description](#project-description)
+- [Repository structure](#repository-structure)
+- [Tools](#tools)
+- [Run locally](#run-locally)
+- [Sample queries](#sample-queries)
 
-## Local development
+## Project description
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Gerry the Manderer is a chatbot for readers who want to see how liberal and
+conservative U.S. news outlets cover the same international story. Give it an
+event and a date range, or ask it to suggest recent headlines. Gerry searches
+a fixed list of ten outlets, including NPR, NBC News, Fox News, and the New York
+Post. It compares what the sampled articles emphasize and where they overlap,
+with citations you can open to read the supporting excerpts.
 
-Start Gerry from the repository root.
+## Repository structure
 
-```bash
+```text
+gerry/
+├── main.py                  # Local server entry point
+├── src/
+│   ├── backend/
+│   │   ├── agents/          # Lead, liberal and conservative Researchers, and Writer
+│   │   ├── application/     # Chat workflow, evidence validation, and answer rendering
+│   │   ├── infrastructure/  # In-memory conversation and research storage
+│   │   ├── interfaces/http/ # FastAPI routes and request/response schemas
+│   │   └── sources/         # Outlet roster, feed and archive search, article extraction
+│   └── frontend/           # Browser chat, story picker, and citation viewer
+├── tests/                   # Agent, source, and HTTP tests
+├── .env.example             # Runtime settings reference
+├── pyproject.toml           # Python project configuration
+└── uv.lock                  # Locked dependency versions
+```
+
+## Tools
+
+- **`search_recent_events`** finds dated headlines so readers can choose a story to compare.
+- **`research_liberal_coverage`** runs a researcher on the liberal outlet group for a given event and date range.
+- **`research_conservative_coverage`** runs a researcher on the conservative outlet group for the same event and date range.
+- **`search_articles`** finds candidate articles in the researcher's assigned outlet feeds and available archives.
+- **`read_article`** fetches and extracts the article text used as evidence.
+- **`write_answer`** turns the findings into a side-by-side briefing or a detailed report with citations.
+
+## Run locally
+
+Install Python 3.12 or later, `uv`, and the Google Cloud CLI (`gcloud`). Use a
+Google Cloud project with the Vertex AI API enabled and credentials that can
+access Gemini. From the repository root, run the following commands with your
+project ID in place of `YOUR_PROJECT_ID`.
+
+```sh
 uv sync --frozen
+gcloud auth application-default login
+export GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 export LITELLM_LOCAL_MODEL_COST_MAP=True
 uv run python main.py
 ```
 
-Open [Gerry](http://127.0.0.1:8080). FastAPI serves the page and API on the same
-port. The frontend uses HTML, CSS, and JavaScript with a locally bundled
-Markdown renderer. It has no build step. The page can load before configuring
-model credentials.
+Open the [chat interface](http://127.0.0.1:8080) or the
+[API explorer](http://127.0.0.1:8080/docs). In the chat, type a question and
+select **Compare coverage**, or pick a headline from **Recent stories**. Click
+a citation to see its excerpt. Ask follow-up questions in the same chat.
 
-The selected model is `vertex_ai/gemini-3.5-flash-lite` in `global`, matching
-`bibs`. Sending a chat message requires Google Application Default Credentials.
+The default model is `vertex_ai/gemini-3.5-flash-lite` in the `global` location
+and uses Google Application Default Credentials. Export any optional settings
+from [`.env.example`](.env.example) in your shell before startup. Run a single
+server process because Gerry stores research for follow-ups in memory.
 
-```bash
-gcloud config set project YOUR_PROJECT_ID
-gcloud auth application-default login
-```
+## Sample queries
 
-See [.env.example](.env.example) for optional environment overrides. Export them
-in your shell; the application does not automatically load `.env` files. No
-Gemini API key is required for the default Vertex configuration.
+Paste any of these into a fresh chat.
 
-Chat history stays in browser memory and clears on refresh. The backend keeps
-research and completed responses in memory for follow-ups and retries until it
-restarts. Run one backend process. After a restart, start a new chat.
-
-## Development commands
-
-```bash
-LITELLM_LOCAL_MODEL_COST_MAP=True uv run pytest
-```
-
-Live backend tests remain opt-in with `uv run pytest -o addopts="" -m live`.
-The regular suite uses scripted model replies and fixture responses.
-For a browser smoke check, send a question, retry an interrupted request, ask
-a follow-up, and open a citation in a comparison.
+1. **Find a story.** “What international stories made headlines in the past
+   seven days? Give me a few to choose from.”
+2. **Compare coverage.** “How did liberal and conservative U.S. outlets cover
+   Ukraine over the past week? Where did they agree, and what did each group
+   emphasize?”
+3. **Ask for a detailed report.** “Compare U.S. news coverage of NATO over the
+   past two weeks. Give me a detailed report on the aspects each group
+   emphasized, with article excerpts that support the comparison.”
