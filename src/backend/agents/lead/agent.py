@@ -28,8 +28,6 @@ from backend.application.turn.request_state import RequestState
 from backend.application.evidence.recent_events import start_of_month_window
 from backend.agents.lead.tools import (
     WRITE_TOOL_NAME,
-    EVENTS_TOOL_NAME,
-    build_events_tool,
     RESEARCH_TOOL_NAMES,
     build_writer_tool,
     build_research_tool,
@@ -54,10 +52,6 @@ class LeadToolBatchHooks(AgentHooks[RequestState]):
         if not calls:
             return
         names: list[str] = [call.name for call in calls]
-        if EVENTS_TOOL_NAME in names:
-            if len(names) != 1:
-                raise ModelBehaviorError("Search for events by itself, before researching.")
-            return
         if not context.context.reusing_research and not all(
             context.context.rounds_started.values(),
         ):
@@ -79,8 +73,6 @@ def build_lead_agent(
     model: Model,
     model_settings: ModelSettings | None,
     today: date,
-    *,
-    allow_event_discovery: bool = True,
 ) -> Agent[RequestState]:
     """
     Build the Lead with one research tool per group and the Writer tool.
@@ -108,8 +100,6 @@ def build_lead_agent(
         build_research_tool(SourceGroup.CONSERVATIVE, model, model_settings, today),
         build_writer_tool(model, model_settings),
     ]
-    if allow_event_discovery:
-        tools.insert(0, build_events_tool(today))
     return Agent(
         name="lead",
         instructions=instructions,

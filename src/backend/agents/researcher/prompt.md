@@ -27,6 +27,9 @@ Output rules:
 - Return the structured findings only. `article_ids` lists every article you read
   successfully, using the exact IDs the tool returned. Cite only those IDs.
 - Cite only passage IDs that appeared in the text you read. Never invent an ID.
+- Say plainly when there is little to report. If no article covers the event, or
+  the articles share the same focus, return findings that show exactly that. Never
+  stretch thin coverage into a difference or a focus.
 - Put problems in `limitations`: articles you could not read, thin coverage, or
   outlets you could not search. Failing to find an article does not mean an
   outlet ignored the event.

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Compare how selected news outlets cover the same international event." />
     <title>Gerry | the Manderer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=a20b85ef" />
-    <script type="module" src="/static/chat.js?v=7f2677e8"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=6c10f9d3" />
+    <script type="module" src="/static/chat.js?v=e2a47b05"></script>
   </head>
   <body>
     <main id="newspaper">
@@ -26,7 +26,6 @@
           <button id="new-chat" class="secondary-button" type="button" hidden>Back to front page</button>
           <h2 id="story-headline" tabindex="-1" hidden></h2>
           <div id="messages"></div>
-          <button id="investigate-further" class="secondary-button" type="button" hidden>Investigate further</button>
           <p id="pending-question" class="chat-question" hidden></p>
           <p id="progress" role="status" hidden></p>
           <p id="error" role="alert" hidden></p>
@@ -44,17 +43,17 @@
                 <p id="connection-message" role="status"></p>
                 <button id="check-connection" class="secondary-button" type="button" hidden>Try again</button>
               </div>
-              <button id="send-message" type="submit" disabled>Compare coverage</button>
+              <button id="send-message" type="submit" disabled>Send</button>
             </div>
           </form>
         </section>
 
         <aside class="stories" aria-labelledby="recent-stories">
           <div class="stories-heading">
-            <h2 id="recent-stories">Recent stories</h2>
+            <h2 id="recent-stories">Recent headlines</h2>
           </div>
-          <p id="stories-status" class="story-note" role="status">Loading recent stories…</p>
-          <button id="retry-stories" class="secondary-button" type="button" hidden>Retry loading stories</button>
+          <p id="stories-status" class="story-note" role="status">Loading recent headlines…</p>
+          <button id="retry-stories" class="secondary-button" type="button" hidden>Retry loading headlines</button>
           <ul id="story-list" class="story-list"></ul>
           <p id="story-rule" class="story-note" hidden></p>
         </aside>

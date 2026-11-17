@@ -14,7 +14,6 @@ from typing import Callable, Protocol
 from dataclasses import field, dataclass
 
 from backend.application.settings import Settings
-from backend.application.evidence.recent_events import EventCandidate
 from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
 from backend.infrastructure.persistence import InMemoryStore
@@ -96,8 +95,6 @@ class RequestState:
     writer_calls: int = 0
     reusing_research: bool = False
     previous_answers: tuple[str, ...] = ()
-    event_options: dict[int, EventCandidate] = field(default_factory=dict)
-    events_window: tuple[date, date] | None = None
     research_slots: asyncio.Semaphore = field(init=False)
     findings: dict[SourceGroup, list[ResearcherFindings]] = field(
         default_factory=lambda: {group: [] for group in SourceGroup}

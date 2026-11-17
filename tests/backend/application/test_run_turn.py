@@ -18,11 +18,15 @@ from urllib.parse import parse_qs, unquote
 from backend.sources.articles import ArticleRecord
 from backend.agents.lead.tools import check_brief
 from backend.application.settings import Settings
-from backend.application.evidence.outlet_assignments import outlet_display_name
 from backend.application.turn.run_turn import run_turn
 from backend.agents.researcher_findings import SourceGroup
 from backend.interfaces.http.chat_contracts import ChatMessage
-from backend.sources.access import ArticleCandidate, ArticleReadResult, SourceAccessOutcome
+from backend.sources.access import (
+    ArticleCandidate,
+    ArticleReadResult,
+    ArticleSearchResult,
+    SourceAccessOutcome,
+)
 from support.scripted_model import (
     FinalOutput,
     ModelCall,
@@ -38,10 +42,10 @@ WINDOW_ARGS: dict[str, Any] = {
     "focus_question": None,
 }
 MESSAGES: list[ChatMessage] = [
-    ChatMessage(role="user", content="Compare coverage of the Paris protests.")
-]
-DISCOVERY_MESSAGES: list[ChatMessage] = [
-    ChatMessage(role="user", content="Help me find a recent event to compare.")
+    ChatMessage(
+        role="user",
+        content="How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?",
+    )
 ]
 
 
@@ -284,15 +288,19 @@ async def test_clear_request_fans_out_concurrently_and_returns_a_brief_compariso
     result = await run_turn(MESSAGES, state, scenario.model)
 
     assert result.failure is None
-    summary, table = result.answer.split("\n\n")
-    assert summary.startswith(
-        "Large protests took place in Paris. The conservative outlets put more emphasis "
-        "on property damage."
+    body, sources = result.answer.split("\n\n## Sources\n")
+    summary, table, legend = body.split("\n\n")
+    assert summary == (
+        "Large protests took place in Paris. [1] The conservative outlets put more emphasis "
+        "on property damage. [2]"
     )
-    assert table.startswith("| Aspect | Liberal outlets | Conservative outlets |")
-    assert "[1]" not in result.answer
-    assert "## Sources" not in result.answer
-    assert "Paragraph 1" not in result.answer
+    assert table.splitlines() == [
+        "| Aspect | Liberal outlets | Conservative outlets |", "| --- | --- | --- |",
+        "| Police response | ●●● central [1] | ●○○ brief [2] |",
+    ]
+    assert legend.startswith("*●●● central focus")
+    assert sources.startswith("1. ")
+    assert "## Limitations" not in result.answer
     agents = {record.agent for record in result.tool_calls}
     assert {"lead", "researcher_liberal", "researcher_conservative"} <= agents
     assert any(
@@ -308,7 +316,7 @@ async def test_clear_request_fans_out_concurrently_and_returns_a_brief_compariso
     ]
     assert len(assignments) == 2
     assert all(len(call.input_items) == 1 for call in assignments)
-    assert all("Compare coverage" not in call.input_text for call in assignments)
+    assert all("How did different outlets" not in call.input_text for call in assignments)
     brief, findings = state.store.load_research(state.conversation_id)
     assert brief.event == "Paris protests"
     assert {item.group for item in findings} == set(SourceGroup)
@@ -356,7 +364,12 @@ async def test_a_side_with_no_usable_articles_gets_a_summary_not_a_comparison(
     assert "| Aspect |" not in result.answer
     assert "Where coverage differs" not in result.answer
     assert "## Limitations" not in result.answer
-    assert "## Sources" not in result.answer
+    assert "### Liberal outlets" in result.answer
+    assert (
+        "### Conservative outlets\n- No articles could be retrieved from conservative outlets."
+        in result.answer
+    )
+    assert "## Sources" in result.answer
     assert "summary_only" in scenario.writer_calls[0].input_text
 
 
@@ -639,7 +652,6 @@ async def test_spent_budget_after_research_still_yields_a_noted_partial_answer(
     assert result.failure is None
     assert "research limit was reached" in result.answer
     assert "This partial result lists the available headlines." in result.answer
-    assert "## Sources" not in result.answer
     assert scenario.writer_calls == []
 
 
@@ -825,7 +837,7 @@ async def test_writer_failure_is_a_recorded_failed_call_and_the_turn_ends_plainl
 
 def quake_headlines() -> list[ArticleCandidate]:
     """
-    Build headlines in which one event is reported by three outlets and one by two.
+    Build headlines in which one story is reported by three outlets and one by two.
     """
     day = date(2026, 11, 6)
     return [
@@ -841,170 +853,212 @@ def quake_headlines() -> list[ArticleCandidate]:
     ]
 
 
-def offer_events(event_ids: list[int], replies: list[list[int]] | None = None):
+TURKEY_TOPIC: dict[str, Any] = {"label": "Turkey earthquake response", "headline_numbers": [1, 2, 3]}
+BRAZIL_TOPIC: dict[str, Any] = {"label": "Brazil runoff results", "headline_numbers": [4, 5]}
+SCHOOL_TOPIC: dict[str, Any] = {"label": "School board budget", "headline_numbers": [6]}
+
+
+def topic_handler(proposal: Any, search: dict[str, Any] | None = None):
     """
-    Build a Lead script: search for events, then offer the given ones.
+    Build a model script that answers only the two topic-step agents.
     """
+    clusterer_inputs: list[str] = []
 
     def reply(call: ModelCall):
         """
-        Search first; then offer ids, using one wrong attempt per entry in replies.
+        Plan the search, then cluster the numbered headlines into the given topics.
         """
-        if not call.tool_results:
-            return ToolCalls(
-                [("search_recent_events", {"topic": None, "start_date": None, "end_date": None})]
-            )
-        attempts = len([i for i in call.input_items if i.get("role") == "user"]) - 1
-        ids = (replies or [])[attempts] if replies and attempts < len(replies) else event_ids
-        return FinalOutput({
-            "brief": {
-                "status": "needs_clarification", "event": "",
-                "clarifying_question": "Which of these events should I compare?",
-            },
-            "event_ids": ids,
-        })
+        if "You are the Topic Planner" in call.system_instructions:
+            return FinalOutput(search or {})
+        if "You are the Topic Clusterer" in call.system_instructions:
+            clusterer_inputs.append(call.input_text)
+            topics = proposal(call, len(clusterer_inputs)) if callable(proposal) else proposal
+            return FinalOutput({"topics": topics})
+        raise AssertionError("Only the topic step may run before a topic is chosen.")
 
+    reply.clusterer_inputs = clusterer_inputs  # type: ignore[attr-defined]
     return reply
 
 
-async def test_recent_events_are_offered_with_attribution_and_dates(
+def keyword_topics(call: ModelCall, attempt: int = 1) -> list[dict[str, Any]]:
+    """
+    Group the numbered headlines the clusterer was shown by the story they mention.
+    """
+    shown: str = call.input_items[0]["content"]
+    topics: list[dict[str, Any]] = []
+    for keyword, label in (("Turkey", "Turkey earthquake response"), ("Brazil", "Brazil runoff results")):
+        numbers = [
+            int(line.split(".", 1)[0]) for line in shown.splitlines()
+            if line[:1].isdigit() and keyword in line
+        ]
+        if numbers:
+            topics.append({"label": label, "headline_numbers": numbers})
+    return topics
+
+
+def route_headlines(fake_sources, by_query: dict[str, list[ArticleCandidate]]) -> None:
+    """
+    Make the fake headline source answer each query with its own scripted list.
+    """
+
+    def discover(query, start_date, end_date, outlets) -> ArticleSearchResult:
+        """Record the call and return the headlines scripted for this query."""
+        fake_sources.headline_calls.append(
+            {"query": query, "start_date": start_date, "end_date": end_date}
+        )
+        found = by_query.get(query, [])
+        reporting = {candidate.outlet_id for candidate in found}
+        return ArticleSearchResult(
+            candidates=tuple(found),
+            outcomes=tuple(
+                SourceAccessOutcome(
+                    outlet_id=outlet, status="success" if outlet in reporting else "no_results",
+                )
+                for outlet in outlets
+            ),
+        )
+
+    fake_sources.discover_headlines = discover
+
+
+async def test_first_message_proposes_clustered_topics_before_any_research(
     make_state,
     fake_sources,
 ) -> None:
     """
-    The reader gets the selected events, rendered with publisher attribution.
+    A new request gets neutral topic choices built from headlines, never article headlines.
     """
     fake_sources.headlines = quake_headlines()
-    scenario = Scenario()
-    scenario.lead_reply = offer_events([1, 2])
+    model = ScriptedModel(topic_handler([TURKEY_TOPIC, BRAZIL_TOPIC, SCHOOL_TOPIC]))
 
-    result = await run_turn(DISCOVERY_MESSAGES, make_state(), scenario.model)
+    result = await run_turn(
+        [ChatMessage(role="user", content="What is happening in the news?")],
+        make_state(), model, today=date(2026, 11, 7),
+    )
 
     assert result.failure is None
-    npr, fox, cbs = (outlet_display_name(o) for o in ("npr", "fox", "cbs"))
-    assert f"1. {npr} headline: “Powerful earthquake strikes coastal Turkey city”" in result.answer
-    assert f"Also reported by {fox}, {cbs}." in result.answer
-    assert "(Nov 6)" in result.answer
+    assert result.answer.startswith("Which of these topics would you like compared?")
     assert result.answer.count("](#compare-event=") == 2
-    assert "school board" not in result.answer
-    assert fake_sources.headline_calls[0]["query"] == ""
-    assert any(r.tool == "search_recent_events" and r.outcome == "success" for r in result.tool_calls)
+    assert "[Turkey earthquake response](" in result.answer
+    assert "outlets" not in unquote(result.answer).replace("different outlets", "")
+    assert "Nov 6" not in result.answer
+    assert "Powerful earthquake strikes" not in result.answer
+    assert "School board" not in result.answer
+    assert "from 2026-10-07 to 2026-11-07" in unquote(result.answer)
+    assert [record.tool for record in result.tool_calls] == ["search_recent_events", "group_topics"]
+    assert not fake_sources.search_calls
+    assert all("You are the Topic" in call.system_instructions for call in model.calls)
 
 
-@pytest.mark.parametrize("question", [
-    "Whats going on in Paris right now?",
-    "What is going on with Paris right now?",
-    "Tell me whats going on in Paris",
-    "What’s happening in Paris today?",
-    "Any headlines from Paris this week?",
-])
-async def test_broad_place_updates_offer_three_choices_before_research(
-    question: str,
+async def test_the_planner_extracts_the_subject_and_period_for_the_headline_search(
     make_state,
     fake_sources,
 ) -> None:
-    """Offer the newest matches even when an older story has more publishers."""
-    today: date = date(2026, 11, 7)
-    headlines: tuple[str, ...] = (
-        "Paris rail workers strike",
-        "Paris museums extend hours",
-        "Paris river flooding worsens",
-        "Paris mayor unveils budget",
-    )
-    fake_sources.headlines = [
-        ArticleCandidate(
-            outlet_id=outlet,
-            url=f"https://{outlet}.example/{number}",
-            title=headline,
-            published_at=today - timedelta(days=1) if number == 0 else today,
-        )
-        for number, headline in enumerate(headlines)
-        for outlet in (("npr", "fox") if number == 0 else ("npr",))
-    ]
-    model: ScriptedModel = ScriptedModel(offer_events([1, 2, 3, 4]))
-    result = await run_turn(
-        [ChatMessage(role="user", content=question)], make_state(), model,
-        today=today,
-    )
+    """
+    The subject words and any stated dates drive the headline search.
+    """
+    fake_sources.headlines = quake_headlines()
+    search = {"topic": "Turkey", "start_date": "2026-05-11", "end_date": "2026-11-11"}
+    model = ScriptedModel(topic_handler([TURKEY_TOPIC, BRAZIL_TOPIC], search))
 
-    assert result.failure is None
-    assert [record.tool for record in result.tool_calls] == ["search_recent_events"]
-    assert fake_sources.headline_calls[0]["query"] == "Paris"
-    assert "Choose a headline" not in result.answer
-    assert result.answer.count("](#compare-event=") == 3
-    assert "from 2026-10-07 to 2026-11-07" in unquote(result.answer)
-    assert "&headline=Paris%20museums%20extend%20hours" in result.answer
-    assert "Paris museums extend hours” (Nov 7)" in result.answer
-    assert "Also reported by ." not in result.answer
-    assert "Paris mayor unveils budget" in result.answer
-    assert "Paris rail workers strike" not in result.answer
-    assert not fake_sources.search_calls
-    assert model.calls == []
-
-
-async def test_broad_place_updates_keep_an_explicit_date_range(make_state, fake_sources) -> None:
-    """Let the Lead extract explicit dates from a broad location question."""
-    def reply(call: ModelCall) -> ToolCalls | FinalOutput:
-        """Find Paris headlines only within the dates stated by the reader."""
-        if not call.tool_results:
-            return ToolCalls([("search_recent_events", {
-                "topic": "Paris", "start_date": "2026-11-04", "end_date": "2026-11-06",
-            })])
-        return FinalOutput({
-            "brief": {
-                "status": "needs_clarification", "event": "",
-                "clarifying_question": "Which event should I compare?",
-            },
-        })
-
-    model: ScriptedModel = ScriptedModel(reply)
-    result = await run_turn(
-        [ChatMessage(role="user", content="What's going on in Paris from Nov 4 to Nov 6?")],
+    await run_turn(
+        [ChatMessage(role="user", content="Tell me about Turkey over the last 6 months")],
         make_state(), model, today=date(2026, 11, 11),
     )
 
-    assert result.failure is None
-    assert fake_sources.headline_calls == [{
-        "query": "Paris", "start_date": date(2026, 11, 4), "end_date": date(2026, 11, 6),
-    }]
+    assert fake_sources.headline_calls[0] == {
+        "query": "Turkey", "start_date": date(2026, 5, 11), "end_date": date(2026, 11, 11),
+    }
 
 
-async def test_lead_cannot_offer_an_event_the_search_did_not_find(
+async def test_a_topic_that_cites_a_headline_that_does_not_exist_is_sent_back_once(
     make_state,
     fake_sources,
 ) -> None:
     """
-    An invented event ID is sent back once, and the corrected offer is used.
+    An invented headline number never reaches the reader; the clusterer is corrected once.
     """
     fake_sources.headlines = quake_headlines()
-    scenario = Scenario()
-    scenario.lead_reply = offer_events([2], replies=[[9]])
+    invented = {"label": "Made up story", "headline_numbers": [1, 99]}
+    handler = topic_handler(
+        lambda call, attempt: [invented] if attempt == 1 else [TURKEY_TOPIC, BRAZIL_TOPIC],
+    )
+    model = ScriptedModel(handler)
 
-    result = await run_turn(DISCOVERY_MESSAGES, make_state(), scenario.model)
+    result = await run_turn(
+        [ChatMessage(role="user", content="What is happening?")], make_state(), model,
+    )
 
-    assert result.failure is None
-    assert "Brazil" in result.answer and "1." in result.answer
-    assert "Turkey" not in result.answer
-
-
-async def test_empty_event_discovery_suggests_a_broader_search(make_state, fake_sources) -> None:
-    """
-    Offer a next step when the feeds return no matching events.
-    """
-    scenario = Scenario()
-    scenario.lead_reply = offer_events([])
-
-    result = await run_turn(DISCOVERY_MESSAGES, make_state(), scenario.model)
-
-    assert result.answer == "Try a broader location or a wider date range."
+    assert len(handler.clusterer_inputs) == 2
+    assert "Made up story" not in result.answer
+    assert "Turkey earthquake response" in result.answer
 
 
-async def test_event_discovery_failure_is_recorded_and_offers_nothing(
+async def test_no_matches_are_stated_and_the_closest_related_topics_are_offered(
     make_state,
     fake_sources,
 ) -> None:
     """
-    A source crash fails the call and the reader is not shown events from nowhere.
+    A request with no matching headlines says so and proposes related topics.
+    """
+    route_headlines(fake_sources, {"": quake_headlines()})
+    model = ScriptedModel(topic_handler(keyword_topics, {"topic": "Brazil runoff elections"}))
+
+    result = await run_turn(
+        [ChatMessage(role="user", content="Tell me about Mars")], make_state(), model,
+    )
+
+    assert result.answer.startswith("No matches found for “Brazil runoff elections”.")
+    assert "closest related topics" in result.answer
+    assert result.answer.index("Brazil runoff results") < result.answer.index("Turkey earthquake")
+    assert [call["query"] for call in fake_sources.headline_calls] == ["Brazil runoff elections", ""]
+
+
+async def test_one_matching_topic_is_shown_first_and_related_topics_fill_the_list(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    With a single match, related topics are added so the reader has at least two choices.
+    """
+    turkey_only = [c for c in quake_headlines() if "Turkey" in c.title]
+    route_headlines(fake_sources, {"Turkey": turkey_only, "": quake_headlines()})
+
+    model = ScriptedModel(topic_handler(keyword_topics, {"topic": "Turkey"}))
+
+    result = await run_turn(
+        [ChatMessage(role="user", content="Turkey news")], make_state(), model,
+    )
+
+    assert result.answer.startswith("I found one matching topic, plus related ones:")
+    assert result.answer.index("Turkey earthquake response") < result.answer.index("Brazil runoff results")
+    assert result.answer.count("](#compare-event=") == 2
+
+
+async def test_nothing_found_anywhere_says_no_matches_without_inventing_topics(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    When no headlines exist at all, the reply states that and asks for a broader search.
+    """
+    model = ScriptedModel(topic_handler([]))
+
+    result = await run_turn(
+        [ChatMessage(role="user", content="Tell me about Mars")], make_state(), model,
+    )
+
+    assert result.answer.startswith("No matches found")
+    assert "broader" in result.answer
+    assert "](#compare-event=" not in result.answer
+
+
+async def test_headline_search_failure_is_recorded_and_offers_nothing(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    A source crash fails the call and the reader is not shown topics from nowhere.
     """
     def crash(*args: object) -> None:
         """
@@ -1013,34 +1067,98 @@ async def test_event_discovery_failure_is_recorded_and_offers_nothing(
         raise RuntimeError("feed parser crashed")
 
     fake_sources.discover_headlines = crash
-    scenario = Scenario()
-    scenario.lead_reply = offer_events([])
-    state = make_state()
+    handler = topic_handler([TURKEY_TOPIC])
+    result = await run_turn(
+        [ChatMessage(role="user", content="What is happening?")], make_state(), ScriptedModel(handler),
+    )
 
-    result = await run_turn(DISCOVERY_MESSAGES, state, scenario.model)
-
+    assert result.answer == "Recent headlines could not be loaded. Please try again shortly."
     assert any(r.tool == "search_recent_events" and r.outcome == "failure" for r in result.tool_calls)
-    assert state.events_window is None
-    assert "Selection rule" not in result.answer
+    assert handler.clusterer_inputs == []
 
 
-async def test_named_riots_over_six_months_go_straight_to_research(
+async def test_a_typed_message_after_the_options_starts_the_topic_step_again(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    Only clicking a topic starts research; typing again proposes fresh topics.
+    """
+    fake_sources.headlines = quake_headlines()
+    handler = topic_handler([TURKEY_TOPIC, BRAZIL_TOPIC])
+    model = ScriptedModel(handler)
+    first = await run_turn(
+        [ChatMessage(role="user", content="What is happening?")], make_state(), model,
+    )
+
+    second = await run_turn(
+        [
+            ChatMessage(role="user", content="What is happening?"),
+            ChatMessage(role="assistant", content=first.answer),
+            ChatMessage(role="user", content="Something about Brazil"),
+        ],
+        make_state(), model,
+    )
+
+    assert len(handler.clusterer_inputs) == 2
+    assert second.answer.startswith("Which of these topics")
+
+
+async def test_a_selected_topic_skips_the_topic_step_and_goes_to_research(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    Clicking a proposed topic starts the usual two-group research, with no second topic step.
+    """
+    fake_sources.headlines = quake_headlines()
+    topics = await run_turn(
+        [ChatMessage(role="user", content="What is happening?")],
+        make_state(), ScriptedModel(topic_handler([TURKEY_TOPIC, BRAZIL_TOPIC])),
+        today=date(2026, 11, 7),
+    )
+    selection: str = topics.answer.split("](#", 1)[1].split(")", 1)[0]
+    question: str = parse_qs(selection)["compare-event"][0]
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    lead = scenario.lead_reply
+
+    def research_selected_topic(call: ModelCall):
+        """Check the Lead was given the chosen topic, then follow the normal script."""
+        if not call.tool_results:
+            assert "Turkey earthquake response" in call.input_text
+        return lead(call)
+
+    scenario.lead_reply = research_selected_topic
+    calls_before = len(fake_sources.headline_calls)
+
+    result = await run_turn(
+        [ChatMessage(role="user", content=question)], make_state(), scenario.model,
+    )
+
+    assert result.failure is None
+    assert "| Aspect | Liberal outlets | Conservative outlets |" in result.answer
+    assert len(fake_sources.headline_calls) == calls_before
+    assert not any("You are the Topic" in call.system_instructions for call in scenario.model.calls)
+
+
+async def test_a_chosen_six_month_topic_keeps_its_full_period_through_research(
     make_state, fake_sources, articles,
 ) -> None:
-    """Keep a named subject on the research path for the requested six months."""
+    """
+    The period carried by a chosen topic is the period both groups research.
+    """
     scenario = Scenario()
     wire_full_scenario(scenario, fake_sources, articles)
     research = scenario.lead_reply
-    discovery = offer_events([])
     window_args: dict[str, str | None] = {
         "event": "Paris riots", "start_date": "2026-05-11", "end_date": "2026-11-11",
         "focus_question": None,
     }
 
     def reply(call: ModelCall) -> ToolCalls | FinalOutput:
-        """Prefer discovery if offered, otherwise research the specified subject."""
-        if "search_recent_events" in call.tool_names:
-            return discovery(call)
+        """Research the chosen topic for its stated months, write, then finish."""
         if not call.tool_results:
             return ToolCalls([
                 ("research_liberal_coverage", window_args),
@@ -1055,7 +1173,10 @@ async def test_named_riots_over_six_months_go_straight_to_research(
 
     scenario.lead_reply = reply
     result = await run_turn(
-        [ChatMessage(role="user", content="Tell me about the Paris riots over the last 6 months")],
+        [ChatMessage(
+            role="user",
+            content="How did different outlets cover “Paris riots” from 2026-05-11 to 2026-11-11?",
+        )],
         make_state(), scenario.model, today=date(2026, 11, 11),
     )
 
@@ -1067,35 +1188,6 @@ async def test_named_riots_over_six_months_go_straight_to_research(
         (call["start_date"], call["end_date"]) == (date(2026, 5, 11), date(2026, 11, 11))
         for call in fake_sources.search_calls
     )
-
-
-async def test_a_chosen_event_goes_through_the_normal_research_flow(
-    make_state,
-    fake_sources,
-    articles,
-) -> None:
-    """
-    After events are offered, the reader's pick starts the usual two-group comparison.
-    """
-    scenario = Scenario()
-    wire_full_scenario(scenario, fake_sources, articles)
-    fake_sources.headlines = [ArticleCandidate(
-        outlet_id="npr", url="https://www.npr.org/paris-protests",
-        title="Paris protests", published_at=date(2026, 11, 6),
-    )]
-    discovery = await run_turn(
-        [ChatMessage(role="user", content="What's happening in Paris?")],
-        make_state(), scenario.model, today=date(2026, 11, 7),
-    )
-    selection: str = discovery.answer.split("](#", 1)[1].split(")", 1)[0]
-    question: str = parse_qs(selection)["compare-event"][0]
-    result = await run_turn(
-        [ChatMessage(role="user", content=question)], make_state(), scenario.model,
-    )
-
-    assert result.failure is None
-    assert "| Aspect | Liberal outlets | Conservative outlets |" in result.answer
-    assert fake_sources.headline_calls[0]["query"] == "Paris"
 
 
 def detailed_report(liberal_article, conservative_article) -> dict[str, Any]:
@@ -1206,7 +1298,7 @@ async def test_detailed_followup_expands_the_previous_briefing(
     assert "## Where coverage overlaps\n- Both outlets describe" in prose
     assert "## Where coverage differs\n- NPR traces road closures" in prose
     assert "## Attributed accounts\n- NPR attributes" in prose
-    assert "## Limitations\n- Sample:" in prose
+    assert "## Limitations" not in second.answer
     assert npr.canonical_url in sources and fox.canonical_url in sources
     assert len(fake_sources.search_calls) == searches_before
     assert len(scenario.writer_calls) == 3
@@ -1235,3 +1327,76 @@ async def test_a_briefing_cannot_carry_detailed_sections(
     assert result.failure is None
     assert len(scenario.writer_calls) == 2
     assert "## Timeline" not in result.answer
+
+
+async def test_a_clusterer_that_returns_nothing_still_leaves_the_reader_with_topics(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    If the model groups nothing usable, headline word overlap supplies the choices.
+    """
+    fake_sources.headlines = quake_headlines()
+    model = ScriptedModel(topic_handler([]))
+
+    result = await run_turn(
+        [ChatMessage(role="user", content="What is happening?")], make_state(), model,
+    )
+
+    assert result.failure is None
+    assert result.answer.count("](#compare-event=") == 2
+    assert "No matches found" not in result.answer
+
+
+async def test_a_whole_headline_as_the_request_still_proposes_related_topics(
+    make_state,
+    fake_sources,
+) -> None:
+    """
+    A search that matches nothing falls back to the closest topics rather than a dead end.
+    """
+    route_headlines(fake_sources, {"": quake_headlines()})
+    search = {"topic": "Brazil president surprise decree overturns runoff election results"}
+    model = ScriptedModel(topic_handler(keyword_topics, search))
+
+    result = await run_turn(
+        [ChatMessage(role="user", content="Tell me about that Brazil decree headline")],
+        make_state(), model,
+    )
+
+    assert result.answer.startswith("No matches found for")
+    assert result.answer.count("](#compare-event=") == 2
+    assert result.answer.index("Brazil runoff results") < result.answer.index("Turkey earthquake")
+
+
+async def test_a_new_comparison_cannot_be_written_without_aspects(
+    make_state,
+    fake_sources,
+    articles,
+) -> None:
+    """
+    An empty alignment is sent back so a chosen topic always yields both sides' bullets.
+    """
+    scenario = Scenario()
+    wire_full_scenario(scenario, fake_sources, articles)
+    good = alignment_for(articles["npr"], articles["fox"])
+    sequence = [[], good]
+
+    def reply(call: ModelCall):
+        """Write with no aspects first, then with a real alignment."""
+        done = len(call.tool_results)
+        if done == 0:
+            return fan_out_then(good)(call)
+        if done in (2, 3):
+            return ToolCalls([("write_answer", {"question": "q", "alignment": sequence[done - 2]})])
+        return FinalOutput(lead_outcome())
+
+    scenario.lead_reply = reply
+
+    result = await run_turn(MESSAGES, make_state(), scenario.model)
+
+    writes = [r for r in result.tool_calls if r.tool == "write_answer"]
+    assert [record.outcome for record in writes] == ["failure", "success"]
+    assert "at least one aspect" in writes[0].error
+    assert len(scenario.writer_calls) == 1
+    assert "| Aspect | Liberal outlets | Conservative outlets |" in result.answer

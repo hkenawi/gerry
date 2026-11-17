@@ -101,7 +101,9 @@ def create_http_app(
     @app.get("/", include_in_schema=False)
     async def serve_home() -> FileResponse:
         """Return the chat page without making a model call."""
-        return FileResponse(FRONTEND_DIRECTORY / "index.html")
+        return FileResponse(
+            FRONTEND_DIRECTORY / "index.html", headers={"Cache-Control": "no-cache"},
+        )
 
     @app.exception_handler(RequestValidationError)
     async def reject_invalid_request(
@@ -143,7 +145,7 @@ def create_http_app(
                 )
             except Exception as error:
                 logger.error("Recent edition discovery failed (%s).", type(error).__name__)
-                raise HTTPException(503, "Recent stories could not be loaded.") from error
+                raise HTTPException(503, "Recent headlines could not be loaded.") from error
             edition = RecentEdition(
                 start_date=start,
                 end_date=end,

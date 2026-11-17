@@ -38,7 +38,8 @@ gerry/
 
 ## Tools
 
-- **`search_recent_events`** finds dated headlines so readers can choose a story to compare.
+- **Topic step** (code, before the Lead runs) finds dated headlines, has a model cluster them into
+  2 to 5 neutral topics, and asks the reader to pick one. It runs on every new request.
 - **`research_liberal_coverage`** runs a researcher on the liberal outlet group for a given event and date range.
 - **`research_conservative_coverage`** runs a researcher on the conservative outlet group for the same event and date range.
 - **`search_articles`** finds candidate articles in the researcher's assigned outlet feeds and available archives.
@@ -62,8 +63,10 @@ uv run python main.py
 
 Open the [chat interface](http://127.0.0.1:8080) or the
 [API explorer](http://127.0.0.1:8080/docs). In the chat, type a question and
-select **Compare coverage**, or pick a headline from **Recent stories**. Click
-a citation to see its excerpt. Ask follow-up questions in the same chat.
+press Enter (or **Send**), then pick one of the proposed topics to research. You can also pick a
+headline from **Recent headlines**. Click a citation number to see its excerpt. Ask follow-up
+questions in the same chat: simple factual ones are answered from the saved articles, and open-ended ones
+start new research.
 
 The default model is `vertex_ai/gemini-3.5-flash-lite` in the `global` location
 and uses Google Application Default Credentials. Export any optional settings

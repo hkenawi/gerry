@@ -10,7 +10,6 @@ const input = document.getElementById("gerry-question");
 const sendButton = document.getElementById("send-message");
 const retryButton = document.getElementById("retry-message");
 const newChatButton = document.getElementById("new-chat");
-const investigateButton = document.getElementById("investigate-further");
 const pendingQuestion = document.getElementById("pending-question");
 const progress = document.getElementById("progress");
 const error = document.getElementById("error");
@@ -28,6 +27,7 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
 const openingProgress = "Mandering…";
 const toolProgress = new Map([
   ["Finished search recent events.", "Polling the headlines…"],
+  ["Finished group topics.", "Sorting the headlines…"],
   ["Finished search articles.", "Drawing political lines…"],
   ["Finished read article.", "Entering evidence into the record…"],
   ["Finished read collected article.", "Reopening the record…"],
@@ -74,8 +74,7 @@ function renderStory(story, edition) {
   title.textContent = story.headline;
   const context = document.createElement("span");
   context.className = "story-context";
-  context.textContent = `${story.headline_outlet} · ${formatEditionDate(story.last_date)}`;
-  if (story.snippet) context.textContent += ` — ${story.snippet}`;
+  context.textContent = formatEditionDate(story.last_date);
   button.append(title, context);
   item.append(button);
   return item;
@@ -84,10 +83,10 @@ function renderStory(story, edition) {
 async function loadEdition() {
   retryStories.hidden = true;
   storiesStatus.hidden = false;
-  storiesStatus.textContent = "Loading recent stories…";
+  storiesStatus.textContent = "Loading recent headlines…";
   try {
     const response = await fetch("/recent-events");
-    if (!response.ok) throw new Error("Recent stories unavailable");
+    if (!response.ok) throw new Error("Recent headlines unavailable");
     const edition = await response.json();
     const stories = edition.events.map((story) => renderStory(story, edition));
     const dateLabel = formatEditionDate(edition.end_date);
@@ -95,13 +94,13 @@ async function loadEdition() {
     editionDate.dateTime = edition.end_date;
     editionDate.textContent = dateLabel;
     editionDate.hidden = false;
-    storyRule.textContent = "Stories reported by at least two approved outlets in the past month, ranked by outlet count.";
+    storyRule.textContent = "Headlines reported by at least two approved outlets in the past month, ranked by outlet count.";
     storyRule.hidden = false;
-    storiesStatus.textContent = stories.length ? "" : "No recent stories matched this rule.";
+    storiesStatus.textContent = stories.length ? "" : "No recent headlines matched this rule.";
     storiesStatus.hidden = stories.length > 0;
     updateControls();
   } catch {
-    storiesStatus.textContent = "Recent stories could not be loaded.";
+    storiesStatus.textContent = "Recent headlines could not be loaded.";
     retryStories.hidden = false;
   }
 }
@@ -118,7 +117,6 @@ function updateControls() {
   retryButton.hidden = retryPayload === null;
   newChatButton.hidden = storyHeadline.hidden;
   newChatButton.disabled = sending;
-  investigateButton.disabled = !connected || input.disabled || startingNewStory;
 }
 
 function showError(message, toolCalls = []) {
@@ -128,47 +126,34 @@ function showError(message, toolCalls = []) {
   if (toolCalls.length) errorTools.append(renderToolCalls(toolCalls));
 }
 
-function hasCoverageToInvestigate(toolCalls) {
-  return toolCalls.some(({ tool, outcome, result }) => {
-    if (outcome !== "success") return false;
-    if (tool === "read_article") return true;
-    if (tool !== "write_answer") return false;
-    try {
-      return ["comparison", "summary_only"].includes(JSON.parse(result)?.mode);
-    } catch {
-      return false;
-    }
-  });
-}
-
-function formatCoverageColumns(table) {
-  const header = table.querySelector("thead tr");
-  const headings = Array.from(header?.children ?? [], cell => cell.textContent.trim());
-  const bodies = table.querySelectorAll("tbody");
-  const rows = Array.from(table.querySelectorAll("tbody > tr"));
-  if (headings.join("|") !== "Aspect|Liberal outlets|Conservative outlets"
-    || !rows.length || rows.some(row => row.children.length !== 3)) return;
-
-  header.firstElementChild.remove();
-  for (const heading of header.children) heading.setAttribute("scope", "col");
-
-  for (const row of rows) {
-    const aspect = row.firstElementChild;
-    const heading = document.createElement("th");
-    heading.setAttribute("scope", "rowgroup");
-    heading.setAttribute("colspan", "2");
-    heading.append(...aspect.childNodes);
-    aspect.remove();
-
-    const headingRow = document.createElement("tr");
-    headingRow.append(heading);
-    const group = document.createElement("tbody");
-    group.append(headingRow, row);
-    table.append(group);
+function formatComparison(table) {
+  const headings = Array.from(table.querySelectorAll("thead th"), cell => cell.textContent.trim());
+  if (headings.join("|") !== "Aspect|Liberal outlets|Conservative outlets") return;
+  table.classList.add("coverage-compare");
+  for (const row of table.querySelectorAll("tbody > tr")) {
+    Array.from(row.children).forEach((cell, index) => {
+      cell.dataset.label = headings[index] ?? "";
+      if (index === 0) return;
+      const match = cell.textContent.trim().match(/^([●○]{3})\s+(\S+)\s*(?:·\s*)?(.*)$/s);
+      if (!match) return;
+      const [, dots, label, rest] = match;
+      const emphasis = document.createElement("span");
+      emphasis.className = `emphasis emphasis-${(dots.match(/●/g) ?? []).length}`;
+      const marker = document.createElement("span");
+      marker.className = "dots";
+      marker.setAttribute("aria-hidden", "true");
+      marker.textContent = dots;
+      emphasis.append(marker, label);
+      const note = document.createElement("span");
+      note.className = "coverage-note";
+      note.textContent = rest.trim();
+      cell.replaceChildren(emphasis, note);
+    });
   }
-
-  for (const body of bodies) body.remove();
-  table.classList.add("coverage-columns");
+  const legend = table.nextElementSibling;
+  if (legend?.matches("p") && legend.textContent.trim().startsWith("●●●")) {
+    legend.classList.add("coverage-legend");
+  }
 }
 
 function renderAnswer(answer, turnNumber) {
@@ -181,29 +166,39 @@ function renderAnswer(answer, turnNumber) {
   const sources = boundary < 0 ? "" : answer.slice(boundary + heading.length).trim();
   article.innerHTML = markdown.render(briefing);
 
-  for (const link of article.querySelectorAll(`a[href^="#${eventChoiceKey}="]`)) {
-    const params = new URLSearchParams(link.getAttribute("href").slice(1));
-    const question = params.get(eventChoiceKey);
-    if (!question) continue;
-    const choice = document.createElement("button");
-    choice.type = "button";
-    choice.className = "secondary-button";
-    choice.dataset.eventQuestion = question;
-    choice.dataset.headline = params.get("headline") ?? "";
-    choice.textContent = link.textContent;
-    link.replaceWith(choice);
+  const choiceSelector = `a[href^="#${eventChoiceKey}="]`;
+  const choiceLists = new Set();
+  for (const link of article.querySelectorAll(choiceSelector)) {
+    const list = link.closest("li")?.parentElement;
+    if (list) choiceLists.add(list);
+  }
+  for (const list of choiceLists) {
+    const choices = document.createElement("ul");
+    choices.className = "story-list topic-choices";
+    for (const item of list.children) {
+      const link = item.querySelector(choiceSelector);
+      const params = link && new URLSearchParams(link.getAttribute("href").slice(1));
+      const question = params?.get(eventChoiceKey);
+      if (!question) continue;
+      const title = document.createElement("span");
+      title.className = "story-title";
+      title.textContent = link.textContent;
+      const choice = document.createElement("button");
+      choice.type = "button";
+      choice.className = "story topic-choice";
+      choice.dataset.eventQuestion = question;
+      choice.dataset.headline = params.get("headline") ?? "";
+      choice.append(title);
+      const row = document.createElement("li");
+      row.append(choice);
+      choices.append(row);
+    }
+    list.previousElementSibling?.classList.add("topic-prompt");
+    list.replaceWith(choices);
   }
 
-  for (const table of article.querySelectorAll("table")) {
-    formatCoverageColumns(table);
-    const scroller = document.createElement("div");
-    scroller.className = "comparison-scroll";
-    scroller.setAttribute("role", "region");
-    scroller.setAttribute("aria-label", "Coverage comparison");
-    scroller.tabIndex = 0;
-    table.before(scroller);
-    scroller.append(table);
-  }
+  for (const table of article.querySelectorAll("table")) formatComparison(table);
+
   if (!sources) return article;
 
   const panel = document.createElement("details");
@@ -324,7 +319,7 @@ function openProgress(requestId) {
   return stream;
 }
 
-async function sendMessage(payload, headline = "") {
+async function sendMessage(payload, headline = "", restoreText = null) {
   if (sending) return;
   sending = true;
   retryPayload = null;
@@ -341,6 +336,7 @@ async function sendMessage(payload, headline = "") {
   progress.hidden = false;
   updateControls();
   let stream;
+  let answered = false;
   try {
     stream = openProgress(payload.request_id);
     const response = await fetch("/chat", {
@@ -368,19 +364,20 @@ async function sendMessage(payload, headline = "") {
       transcript.append(question);
     }
     const answer = renderAnswer(reply.answer, payload.messages.length);
-    if (answer.querySelector(".research-sources") || hasCoverageToInvestigate(reply.tool_calls)) {
-      investigateButton.hidden = false;
-    }
     if (reply.tool_calls.length) answer.append(renderToolCalls(reply.tool_calls));
     transcript.append(answer);
     messages = [...payload.messages, { role: "assistant", content: reply.answer }];
     conversationId = reply.conversation_id;
     input.value = "";
+    answered = true;
   } catch {
     retryPayload = payload;
     showError("The connection was interrupted. Retry this message.");
   } finally {
     stream?.close();
+    if (!answered && restoreText && retryPayload === null && !input.value) {
+      input.value = restoreText;
+    }
     sending = false;
     pendingQuestion.hidden = true;
     progress.hidden = true;
@@ -395,33 +392,36 @@ function resetConversation() {
   startingNewStory = false;
   draftedHeadline = "";
   transcript.replaceChildren();
-  investigateButton.hidden = true;
   storyHeadline.hidden = true;
   storyHeadline.textContent = "";
   newspaper.classList.remove("story-view");
 }
 
-function submitQuestion(content, headline = "") {
+function submitQuestion(content, headline = "", fromInput = false) {
   if (!connected || !content || sending || retryPayload) return;
   if (startingNewStory) resetConversation();
   draftedHeadline = "";
+  const restoreText = fromInput ? input.value : null;
+  if (fromInput) input.value = "";
   void sendMessage({
     conversation_id: conversationId,
     request_id: crypto.randomUUID(),
     messages: [...messages, { role: "user", content }],
-  }, headline);
+  }, headline, restoreText);
 }
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   const content = input.value.trim();
   const headline = draftedHeadline && content.includes(`“${draftedHeadline}”`) ? draftedHeadline : "";
-  submitQuestion(content, headline);
+  submitQuestion(content, headline, true);
 });
 
-investigateButton.addEventListener("click", () => {
-  if (investigateButton.hidden || investigateButton.disabled) return;
-  submitQuestion("Go deeper on the previous briefing. What else did the reporting uncover, and what’s still unclear?");
+input.addEventListener("keydown", (event) => {
+  const isEnter = event.key === "Enter" || event.keyCode === 13;
+  if (!isEnter || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  if (!sendButton.disabled) form.requestSubmit();
 });
 
 newChatButton.addEventListener("click", () => {
@@ -436,7 +436,11 @@ input.addEventListener("input", updateControls);
 storyList.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-question]");
   if (!button || button.disabled) return;
-  startingNewStory = !storyHeadline.hidden;
+  if (!storyHeadline.hidden) {
+    startingNewStory = true;
+    submitQuestion(button.dataset.question, button.dataset.headline);
+    return;
+  }
   draftedHeadline = button.dataset.headline;
   input.value = button.dataset.question;
   updateControls();

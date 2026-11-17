@@ -208,10 +208,9 @@ flowchart TD
 `run_turn()` builds a Lead agent with the current date in its instructions
 and passes the validated visible history as model input. The Lead's output
 schema wraps a `ResearchBrief`. A clarification brief requires a question.
-A clear brief requires a start and end date in order. The output can also carry up
-to five `event_ids`, described below.
+A clear brief requires a start and end date in order.
 
-The Lead can call `search_recent_events`, `research_liberal_coverage`,
+The Lead can call `research_liberal_coverage`,
 `research_conservative_coverage`, and `write_answer`. They are SDK function tools implemented as Python wrappers
 that start nested runs. The Lead retains control of the overall turn and receives
 the results of its calls. Each wrapper gets `RequestState` through SDK context.
@@ -226,8 +225,10 @@ return the brief that was used for research and have an answer already stored
 in request state.
 
 For a follow-up with saved research, the Lead prompt includes the saved brief
-and findings. The Lead may call the Writer directly when those findings suffice
-or use targeted research within the same event and window.
+and findings. A straightforward question is answered from those findings with a
+detailed, comparison-free `write_answer`. An open-ended question runs targeted
+research for both groups on the same event and window and is answered with the
+two-sided bullet lists.
 [Turn entry point](../src/backend/application/turn/run_turn.py) ·
 [Lead setup](../src/backend/agents/lead/agent.py) · [Lead tools](../src/backend/agents/lead/tools.py) ·
 [Brief schema](../src/backend/agents/research_brief.py)
@@ -265,21 +266,32 @@ for follow-ups. [Researcher agent](../src/backend/agents/researcher/agent.py) ·
 
 ### Writer and answer policy
 
-### Finding an event
+### Choosing a topic
 
-A reader who has not named an event can get five to choose from.
-`search_recent_events` takes an optional topic and period, defaulting to the past
-seven days and capped at 31 days. It lists dated headlines from all ten feeds
-through `discover_headlines()`, a blank-query form of source discovery. It groups
-headlines that share distinctive words and keeps events reported by at least two
-distinct outlets, ordered by outlet count, at most twelve. Undated headlines are
-left out. The Lead chooses up to five international events by ID. A finish that names
-an ID the search did not return is sent back for correction. Code renders the
-numbered list from the stored headlines, attributed to each outlet with dates, plus
-the selection rule and a note when fewer than five qualify, or that none did. The
-list is saved as the assistant's answer, so the reader's pick arrives as the next
-message. The same tool with a topic and dates also resolves an ambiguous event. The
-search uses one unit of the shared search budget, and its failures are recorded.
+Every new conversation starts with a topic step that code owns, so the Lead cannot
+skip it. `run_turn()` runs it whenever the conversation has no saved research and
+the message is not already a chosen topic (`How did different outlets cover “X” from
+A to B?`, which is also what a front-page headline sends). A reader who types
+again after seeing options therefore gets a fresh set of options.
+
+1. A planner agent reads the request and returns the subject words and, if stated,
+   the period (default: one month back).
+2. `discover_headlines()` lists dated headlines from all approved outlets.
+3. A clusterer agent receives up to 40 numbered headlines and groups them into 2 to
+   5 neutral topics, each with a short label and headline numbers.
+4. Code validates the output (every number must exist and appear once; a topic
+   must span at least two outlets), drops what fails, and ranks by outlet count.
+   One correction attempt is allowed for invalid numbers.
+5. With fewer than two valid topics, the unfiltered recent headlines are clustered and
+   the topics closest to the request words fill the list. With none at all, the reply
+   says "No matches found" and still lists the closest related topics.
+
+Each option is a link the browser turns into a button. Its question carries the label
+and the window, so the Lead researches exactly the chosen topic and period. The
+searches use the shared search budget and are recorded as `search_recent_events` and
+`group_topics` calls. [Topic step](../src/backend/application/turn/topic_step.py) ·
+[Clustering rules](../src/backend/application/evidence/topic_clusters.py) ·
+[Topic agents](../src/backend/agents/topics/agent.py)
 
 ### Briefing and detailed report
 
@@ -428,10 +440,13 @@ findings cited. [Article contract](../src/backend/sources/articles/contracts.py)
 ## 7. Rendering and citation behavior
 
 The renderer builds the briefing from the structured report, validated
-alignment, sample assessment, and recorded failed reads. It can produce the
-summary, comparison table, overlap, differences, limitations, and source list.
-It omits comparison sections when only a summary is supported and omits a
-table if there are no alignment rows. A no-coverage result has its own simpler
+alignment, and sample assessment. It produces a cited summary, a comparison table, and a numbered source list. The
+table has one row per aspect and a cell per side: an emphasis marker (●●● central,
+●○○ brief, ○○○ none), then a short note, separated by " · ". The page turns the
+table into stacked rows with the marker above the note. Every sentence and cell
+carries an in-text number such as [1]. There is no Limitations section: the only
+caveat kept is one line when a side had no usable articles. With no aspects but a side
+missing, each side gets its own short block saying what happened. A no-coverage result has its own simpler
 layout.
 
 A reference like `[2]` identifies an article in the rendered answer. Numbers

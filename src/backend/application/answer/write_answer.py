@@ -70,11 +70,17 @@ async def write_answer(
     """Write, validate, and store the briefing, or a detailed report, or explain the failure."""
     if state.writer_calls >= MAX_WRITER_CALLS:
         return refuse("The Writer has already been tried the maximum number of times.")
-    state.writer_calls += 1
     articles_by_group: dict[SourceGroup, tuple[ArticleRecord, ...]] = (
         collect_articles_by_group(state)
     )
     assessment: SampleAssessment = assess_sample(articles_by_group)
+    if not detailed and not alignment and assessment.mode is AnswerMode.COMPARISON:
+        return refuse(
+            "A comparison needs at least one aspect in the alignment. List what each "
+            "group's articles covered; if both covered the same aspects, list them for "
+            "both groups, and mark an aspect not_in_sample for a group with nothing on it."
+        )
+    state.writer_calls += 1
     if assessment.mode is AnswerMode.NO_EVIDENCE:
         state.final_answer = render_no_evidence_answer(
             assessment.reason, state.failed_reads

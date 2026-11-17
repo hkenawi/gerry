@@ -74,7 +74,9 @@ async def test_home_serves_the_chat_page_and_its_assets() -> None:
 
     assert page.status_code == script.status_code == stylesheet.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
-    assert "Compare coverage" in page.text
+    assert 'id="send-message"' in page.text and ">Send</button>" in page.text
+    assert "Investigate further" not in page.text
+    assert "Recent headlines" in page.text and "Recent stories" not in page.text
     assert "javascript" in script.headers["content-type"]
     assert stylesheet.headers["content-type"].startswith("text/css")
 
@@ -173,7 +175,7 @@ async def test_chat_runs_the_workflow_and_replays_the_first_turn() -> None:
     A valid turn gets a conversation ID, its own request ID, an answer, and calls.
     """
     model: ScriptedModel = ScriptedModel(clarify)
-    messages: list[dict[str, str]] = [{"role": "user", "content": "Compare coverage."}]
+    messages: list[dict[str, str]] = [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}]
     payload: dict[str, object] = {
         "conversation_id": None,
         "request_id": "turn-1",
@@ -278,7 +280,7 @@ async def test_retry_during_a_running_turn_does_not_start_another_model_call() -
     payload: dict[str, object] = {
         "conversation_id": None,
         "request_id": "running-turn",
-        "messages": [{"role": "user", "content": "Compare coverage."}],
+        "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
     }
     async with build_client(model) as client:
         first: asyncio.Task[Response] = asyncio.create_task(client.post("/chat", json=payload))
@@ -306,7 +308,7 @@ async def test_blank_model_answer_replays_as_a_failure_without_appending_history
     app = build_app(Settings(), model)
     payload: dict[str, object] = {
         "conversation_id": None, "request_id": "blank-answer",
-        "messages": [{"role": "user", "content": "Compare coverage."}],
+        "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first: Response = await client.post("/chat", json=payload)
@@ -355,7 +357,7 @@ async def test_chat_follow_up_can_reuse_saved_research(
     store: InMemoryStore = app.state.store
     first_request: ChatRequest = ChatRequest.model_validate({
         "conversation_id": None, "request_id": "initial",
-        "messages": [{"role": "user", "content": "Compare earthquake coverage."}],
+        "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
     })
     record, _ = store.begin_request(first_request)
     store.save_article(record.conversation_id, article)
@@ -368,7 +370,7 @@ async def test_chat_follow_up_can_reuse_saved_research(
         response: Response = await client.post("/chat", json={
             "conversation_id": record.conversation_id, "request_id": "follow-up",
             "messages": [
-                {"role": "user", "content": "Compare earthquake coverage."},
+                {"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"},
                 {"role": "assistant", "content": "Here is the available coverage."},
                 {"role": "user", "content": "What did NPR report? Include sources and excerpts."},
             ],
@@ -398,7 +400,7 @@ async def test_model_outage_returns_a_retryable_503_that_is_replayed_and_not_sto
     app = build_app(Settings(), model)
     payload: dict[str, object] = {
         "conversation_id": None, "request_id": "outage",
-        "messages": [{"role": "user", "content": "Compare coverage."}],
+        "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first: Response = await client.post("/chat", json=payload)
@@ -419,7 +421,7 @@ async def test_each_turn_logs_identifiers_outcome_and_timing(caplog) -> None:
     async with build_client() as client:
         response: Response = await client.post("/chat", json={
             "conversation_id": None, "request_id": "trace-me",
-            "messages": [{"role": "user", "content": "Compare coverage."}],
+            "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
         })
 
     line: str = next(r.getMessage() for r in caplog.records if "trace-me" in r.getMessage())
@@ -427,7 +429,7 @@ async def test_each_turn_logs_identifiers_outcome_and_timing(caplog) -> None:
     assert "status=200" in line and "failure=none" in line
     assert "tool_calls=" in line and "seconds=" in line
     assert "Model call by lead used" in caplog.text
-    assert "Compare coverage" not in caplog.text
+    assert "Paris protests" not in caplog.text
 
 
 async def test_save_failure_returns_503_and_the_request_can_be_resent(monkeypatch) -> None:
@@ -441,7 +443,7 @@ async def test_save_failure_returns_503_and_the_request_can_be_resent(monkeypatc
     monkeypatch.setattr(app.state.store, "complete_request", fail_save)
     payload: dict[str, object] = {
         "conversation_id": None, "request_id": "save-fails",
-        "messages": [{"role": "user", "content": "Compare coverage."}],
+        "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first: Response = await client.post("/chat", json=payload)
@@ -466,7 +468,7 @@ async def test_cancelled_request_is_marked_interrupted_and_does_not_replay_work(
     app = build_app(Settings(), ScriptedModel(hang))
     payload: dict[str, object] = {
         "conversation_id": None, "request_id": "dropped",
-        "messages": [{"role": "user", "content": "Compare coverage."}],
+        "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         task = asyncio.create_task(client.post("/chat", json=payload))
@@ -487,7 +489,7 @@ async def test_only_the_most_recent_progress_streams_are_kept(monkeypatch) -> No
         for name in ("one", "two", "three"):
             await client.post("/chat", json={
                 "conversation_id": None, "request_id": name,
-                "messages": [{"role": "user", "content": "Compare coverage."}],
+                "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
             })
         oldest: Response = await client.get("/chat/progress/one")
         newest: Response = await client.get("/chat/progress/three")

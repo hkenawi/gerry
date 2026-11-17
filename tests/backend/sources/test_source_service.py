@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from backend.application.settings import Settings
 from backend.sources.articles import ArticleRecord
+from backend.agents.researcher_findings import SourceGroup
+from backend.application.evidence.outlet_assignments import outlets_for_group
 from backend.sources.service import ArticleSourceService
 from backend.infrastructure.persistence import InMemoryStore
 from backend.application.turn.run_turn import TurnResult, run_turn
@@ -91,7 +93,22 @@ async def test_turn_uses_real_source_discovery_extraction_and_evidence_storage()
                     for group in ("liberal", "conservative")
                 ])
             if len(outputs) == 2:
-                return ToolCalls([("write_answer", {"question": brief["event"], "alignment": []})])
+                saved: tuple[ArticleRecord, ...] = store.list_articles(conversation_id)
+
+                def treatment(group: SourceGroup) -> dict[str, object]:
+                    """Cite the first passage of an article saved for this group."""
+                    article = next(a for a in saved if a.outlet_id in outlets_for_group(group))
+                    return {
+                        "state": "central_focus", "note": "Reported rescue work.",
+                        "passage_ids": [article.passages[0].passage_id],
+                    }
+
+                alignment = [{
+                    "aspect": "Rescue work",
+                    "liberal": treatment(SourceGroup.LIBERAL),
+                    "conservative": treatment(SourceGroup.CONSERVATIVE),
+                }]
+                return ToolCalls([("write_answer", {"question": brief["event"], "alignment": alignment})])
             return FinalOutput({"brief": {**brief, "status": "clear"}})
         if "You are the Writer" in call.system_instructions:
             saved: tuple[ArticleRecord, ...] = store.list_articles(conversation_id)
@@ -121,12 +138,14 @@ async def test_turn_uses_real_source_discovery_extraction_and_evidence_storage()
         })
 
     result: TurnResult = await run_turn(
-        [ChatMessage.model_validate({"role": "user", "content": "Compare earthquake rescue coverage."})],
+        [ChatMessage.model_validate({"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"})],
         state, ScriptedModel(reply), today=date(2026, 11, 8),
     )
 
     assert result.failure is None
-    assert result.answer == "Both groups reported rescue work after the earthquake."
+    assert result.answer.startswith("Both groups reported rescue work after the earthquake. [1]")
+    assert "| Rescue work | ●●● central · Reported rescue work. [" in result.answer
+    assert "## Sources" in result.answer
     assert {article.canonical_url for article in state.store.list_articles(state.conversation_id)} == set(urls)
 
 
@@ -136,7 +155,7 @@ def build_store() -> tuple[InMemoryStore, str]:
     request: ChatRequest = ChatRequest.model_validate(
         {
             "conversation_id": None, "request_id": "source-test",
-            "messages": [{"role": "user", "content": "Compare earthquake coverage."}],
+            "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
         },
     )
     record, _ = store.begin_request(request)

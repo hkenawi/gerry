@@ -1,13 +1,13 @@
 """
 Run one turn of the Lead, Researcher, and Writer workflow.
 
-``run_turn`` is a plain async function with no HTTP dependency. It clarifies an
-unclear request, researches both source groups concurrently, decides in code
+``run_turn`` is a plain async function with no HTTP dependency. A new request first
+gets a topic step that proposes clustered topics to choose from; a chosen topic or a
+follow-up then researches both source groups concurrently, decides in code
 whether the evidence supports a comparison or only a summary, has the Writer
 produce cited claims, and renders the validated answer. The HTTP layer, sessions,
 and progress streaming are connected to this function separately."""
 
-import re
 import asyncio
 import logging
 
@@ -20,17 +20,16 @@ from agents import Agent, ModelSettings, TResponseInputItem
 
 from backend.sources.articles import ArticleRecord
 from backend.agents.lead.schemas import LeadOutcome
-from backend.agents.lead.tools import find_events
 from backend.agents.research_brief import BriefStatus
 from backend.agents.lead.agent import build_lead_agent
 from backend.agents.researcher_findings import SourceGroup
 from backend.agents.writer.schemas import Claim, WriterReport
 from backend.application.turn.request_state import RequestState
 from backend.interfaces.http.chat_contracts import ChatMessage, ChatRole
-from backend.application.answer.answer_rendering import render_answer, render_event_options
+from backend.application.answer.answer_rendering import render_answer
 from backend.application.evidence.outlet_assignments import outlet_display_name
 from backend.application.turn.tool_calls import ToolCallOutcome, ToolCallRecord
-from backend.application.evidence.recent_events import RECENT_TIME_PHRASE
+from backend.application.turn.topic_step import is_topic_selection, propose_topics
 from backend.application.evidence.collected_evidence import collect_articles_by_group
 from backend.application.turn.failure_category import FailureCategory, describe_failure
 from backend.application.turn.structured_run import BudgetExceeded, run_with_correction
@@ -44,25 +43,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 LIMIT_NOTE: str = (
     "The research limit was reached before every gap could be followed up, "
     "so some gaps remain."
-)
-RECENT_PLACE_QUESTION: re.Pattern[str] = re.compile(
-    r"(?:tell me(?: about)?\s+)?"
-    r"(?:what(?:['’]?s| is)\s+(?:going on|happening|the latest)"
-    r"|(?:any|latest|recent)\s+(?:news|headlines))"
-    r"\s+(?:in|from|around|with)\s+(?P<topic>.+?)"
-    rf"(?:\s+{RECENT_TIME_PHRASE})?[?!.]*",
-    re.IGNORECASE,
-)
-DIRECT_RESEARCH_REQUEST: re.Pattern[str] = re.compile(
-    r"^(?:please\s+)?(?:tell me about|explain|summari[sz]e|brief me on"
-    r"|compare (?:the )?coverage of|how did (?:(?:the|different) )?(?:outlets|press|media) cover)\s+"
-    r"(?!(?:the\s+)?(?:(?:latest|recent|current)\s+)?(?:events|headlines|news|stories)\b|what\b)",
-    re.IGNORECASE,
-)
-EXPLICIT_DATE_IN_TOPIC: re.Pattern[str] = re.compile(
-    r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2})\b"
-    r"|\s(?:from|between|on|since)\s+(?:[a-z]+\.?\s+)?\d",
-    re.IGNORECASE,
 )
 
 
@@ -99,21 +79,12 @@ async def run_lead_stage(
     today: date,
 ) -> LeadOutcome | None:
     """Run the Lead within the remaining deadline and return its validated outcome."""
-    question: str = " ".join(messages[-1].content.split())
-    agent: Agent[RequestState] = build_lead_agent(
-        state, model, model_settings, today,
-        allow_event_discovery=DIRECT_RESEARCH_REQUEST.match(question) is None,
-    )
+    agent: Agent[RequestState] = build_lead_agent(state, model, model_settings, today)
 
     def validate(output: LeadOutcome) -> str | None:
         """
         Require research and a stored answer before a clear brief is accepted.
         """
-        if output.event_ids:
-            if output.brief.status is BriefStatus.CLEAR:
-                return "Offer events only with a needs_clarification brief."
-            unknown: list[int] = [i for i in output.event_ids if i not in state.event_options]
-            return f"Event IDs {unknown} were not in the search results." if unknown else None
         if output.brief.status is not BriefStatus.CLEAR:
             return None
         if state.brief is None:
@@ -177,22 +148,12 @@ async def run_turn(
         message.content for message in messages if message.role is ChatRole.ASSISTANT
     )
     try:
-        discovery: re.Match[str] | None = RECENT_PLACE_QUESTION.fullmatch(
-            messages[-1].content.strip(),
-        )
-        topic: str | None = discovery.group("topic") if discovery is not None else None
-        if topic and not EXPLICIT_DATE_IN_TOPIC.search(topic):
-            await asyncio.wait_for(
-                find_events(state, topic, None, None, today=current_date),
+        if not state.reusing_research and not is_topic_selection(messages[-1].content):
+            topics: str = await asyncio.wait_for(
+                propose_topics(state, model, model_settings, messages[-1].content, current_date),
                 timeout=state.budget.remaining_seconds(),
             )
-            answer: str = "Recent headlines could not be loaded. Please try again shortly."
-            if state.events_window is not None:
-                answer = render_event_options(
-                    list(state.event_options.values()),
-                    state.events_window,
-                )
-            return TurnResult(answer, state.recorder.records)
+            return TurnResult(topics, state.recorder.records)
         outcome: LeadOutcome | None = await run_lead_stage(
             state, model, model_settings, messages, current_date,
         )
@@ -219,13 +180,7 @@ async def run_turn(
     if outcome is None:
         return build_failure_result(state, FailureCategory.INVALID_OUTPUT)
     if outcome.brief.status is not BriefStatus.CLEAR:
-        question: str = outcome.brief.clarifying_question or ""
-        if state.events_window is not None:
-            question = render_event_options(
-                [state.event_options[i] for i in dict.fromkeys(outcome.event_ids)],
-                state.events_window,
-            )
-        return TurnResult(question, state.recorder.records)
+        return TurnResult(outcome.brief.clarifying_question or "", state.recorder.records)
     if state.final_answer is None:
         return build_failure_result(state, FailureCategory.INVALID_OUTPUT)
     return TurnResult(state.final_answer, state.recorder.records)

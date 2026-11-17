@@ -2,8 +2,8 @@
 Render the reader-facing Markdown answer and verify its citations.
 
 The Writer supplies claims tied to passage IDs; this module resolves each ID to
-a saved article, numbers the citations, builds the comparison table, and states
-limitations such as failed articles and unequal samples. Invalid citations are
+a saved article, numbers the citations, builds
+the two-sided bullet lists. Invalid citations are
 reported as problems so they can be corrected and are never shown to readers."""
 
 import re
@@ -12,20 +12,26 @@ from datetime import date
 from urllib.parse import quote
 
 from backend.sources.articles import ArticleRecord
-from backend.application.evidence.recent_events import EventCandidate
+from backend.agents.topics.schemas import MAX_TOPICS
+from backend.application.evidence.topic_clusters import TopicOption
 from backend.sources.access import SourceAccessOutcome
 from backend.agents.researcher_findings import SourceGroup
 from backend.agents.writer.schemas import Claim, PassageQuote, WriterReport
 from backend.sources.constants import ArticleType, SourceAccessStatus
-from backend.application.evidence.outlet_assignments import outlet_display_name
+from backend.application.evidence.outlet_assignments import group_for_outlet, outlet_display_name
 from backend.application.answer.sample_assessment import AnswerMode, SampleAssessment
 from backend.agents.lead.schemas import AspectAlignment, AspectTreatment, CoverageState
 
-COVERAGE_LABELS: dict[CoverageState, str] = {
-    CoverageState.CENTRAL: "Central focus",
-    CoverageState.INCIDENTAL: "Mentioned in passing",
-    CoverageState.NOT_IN_SAMPLE: "Not in the sampled articles",
+MAX_TOPICS_SHOWN: int = MAX_TOPICS
+SEE_SUMMARY_NOTE: str = "- See the summary above."
+EMPHASIS: dict[CoverageState, tuple[str, str]] = {
+    CoverageState.CENTRAL: ("●●●", "central"),
+    CoverageState.INCIDENTAL: ("●○○", "brief"),
+    CoverageState.NOT_IN_SAMPLE: ("○○○", "none"),
 }
+EMPHASIS_LEGEND: tuple[tuple[str, str], ...] = (
+    ("●●●", "central focus"), ("●○○", "mentioned briefly"), ("○○○", "not in the sampled articles"),
+)
 
 FAILURE_PHRASES: dict[SourceAccessStatus, str] = {
     SourceAccessStatus.NO_RESULTS: "the search found nothing usable",
@@ -167,16 +173,63 @@ def find_alignment_problems(
     return problems
 
 
-def describe_treatment(treatment: AspectTreatment, numbers: CitationNumbers | None) -> str:
+def describe_treatment(
+    treatment: AspectTreatment,
+    numbers: CitationNumbers,
+) -> str:
     """
-    Render one table cell: the coverage label, optional note, and citations.
+    Render one comparison cell: an emphasis marker, then a short note with citations.
+
+    The marker and the note are separated by " · " so the page can lay them out as
+    two lines; unstyled, the cell still reads as plain text.
     """
-    text: str = COVERAGE_LABELS[treatment.state]
-    if treatment.note:
-        text += f": {treatment.note}"
-    if numbers is not None:
+    dots, label = EMPHASIS[treatment.state]
+    text: str = f"{dots} {label}"
+    if treatment.state is not CoverageState.NOT_IN_SAMPLE:
+        if treatment.note:
+            text += f" · {treatment.note}"
         text += numbers.cite(treatment.passage_ids)
-    return text.replace("|", "/").replace("\n", " ")
+    return " ".join(text.replace("|", "/").split())
+
+
+def render_comparison(
+    alignment: list[AspectAlignment],
+    numbers: CitationNumbers,
+) -> str:
+    """
+    Render the aspect-by-aspect comparison, one row per aspect, with a legend.
+    """
+    rows: list[str] = [
+        "| Aspect | Liberal outlets | Conservative outlets |",
+        "| --- | --- | --- |",
+    ]
+    for row in alignment:
+        aspect: str = " ".join(row.aspect.replace("|", "/").split())
+        rows.append(
+            f"| {aspect} | {describe_treatment(row.liberal, numbers)} "
+            f"| {describe_treatment(row.conservative, numbers)} |"
+        )
+    legend: str = "  ".join(f"{dots} {meaning}" for dots, meaning in EMPHASIS_LEGEND)
+    return "\n".join(rows) + f"\n\n*{legend}*"
+
+
+def render_unaligned_sides(missing: frozenset[SourceGroup]) -> str:
+    """
+    Show both sides when no aspects were compared, naming any side with no articles.
+    """
+    if not missing:
+        return ""
+    blocks: list[str] = []
+    for heading, group in (
+        ("Liberal outlets", SourceGroup.LIBERAL),
+        ("Conservative outlets", SourceGroup.CONSERVATIVE),
+    ):
+        body: str = (
+            f"- No articles could be retrieved from {group.value} outlets."
+            if group in missing else SEE_SUMMARY_NOTE
+        )
+        blocks.append(f"### {heading}\n{body}")
+    return "\n\n".join(blocks)
 
 
 def render_cited_claim(claim: Claim, numbers: CitationNumbers) -> str:
@@ -213,26 +266,6 @@ def list_detail_sections(
         ("Timeline", report.timeline),
     ])
     return sections
-
-
-def render_limitations(
-    assessment: SampleAssessment,
-    failed_reads: list[SourceAccessOutcome],
-    notes: tuple[str, ...] = (),
-) -> str:
-    """
-    State the sample counts, thin sides, and every failed article plainly.
-    """
-    lines: list[str] = [f"- Sample: {assessment.sample_statement}."]
-    for group in assessment.thin_groups:
-        lines.append(
-            f"- The {group.value} sample is below the usual minimum "
-            "(2 reporting articles from 2 outlets), so treat this comparison "
-            "with caution."
-        )
-    lines.extend(render_failed_reads(failed_reads))
-    lines.extend(f"- {note}" for note in notes)
-    return "\n".join(lines)
 
 
 def render_failed_reads(failed_reads: list[SourceAccessOutcome]) -> list[str]:
@@ -279,7 +312,7 @@ def render_followup(
     failed_reads: list[SourceAccessOutcome],
     previous_answers: tuple[str, ...],
 ) -> str:
-    """Render new analysis and detailed sections with citations and limitations."""
+    """Render new analysis and detailed sections, each claim cited by number."""
     previous_text: str = normalize_claim_text("\n".join(previous_answers))
     citations: CitationNumbers = CitationNumbers(articles)
     seen: set[str] = set()
@@ -304,8 +337,8 @@ def render_followup(
             sections.append(f"## {heading}\n" + render_claims(fresh, citations))
     if not sections:
         sections.append("I couldn’t verify any additional details from the collected articles.")
-    notes: tuple[str, ...] = (assessment.reason,) if assessment.reason else ()
-    sections.append("## Limitations\n" + render_limitations(assessment, failed_reads, notes))
+    if assessment.reason:
+        sections.append(assessment.reason)
     if citations.sources():
         sections.append(render_sources_section(citations))
     return "\n\n".join(sections)
@@ -322,46 +355,41 @@ def render_answer(
     detailed: bool = False,
 ) -> str:
     """
-    Render a short briefing or a detailed report with citations and excerpts.
+    Render a short briefing or a detailed report, every claim cited by number.
     """
-    numbers: CitationNumbers | None = CitationNumbers(articles) if detailed else None
+    numbers: CitationNumbers = CitationNumbers(articles)
     comparing: bool = assessment.mode is AnswerMode.COMPARISON
     sections: list[str] = []
-    if numbers is None:
-        sentences: list[str] = [" ".join(claim.text.split()) for claim in report.summary]
-        if assessment.reason:
-            sentences.append(assessment.reason)
-        elif assessment.thin_groups:
-            sentences.append("This comparison draws on a small sample.")
-        sentences.extend(notes)
-        sections.append(" ".join(sentences))
-    else:
+    if detailed:
         if not comparing:
             sections.append(f"> {assessment.reason}")
         sections.append(
             "## What the coverage reports\n" + render_claims(report.summary, numbers)
         )
-    if comparing and alignment:
-        rows: list[str] = [
-            "| Aspect | Liberal outlets | Conservative outlets |",
-            "| --- | --- | --- |",
-        ]
-        for row in alignment:
-            rows.append(
-                f"| {row.aspect} | {describe_treatment(row.liberal, numbers)} "
-                f"| {describe_treatment(row.conservative, numbers)} |"
-            )
-        table: str = "\n".join(rows)
-        sections.append(f"## How the coverage compares\n{table}" if detailed else table)
-    if numbers is None:
-        return "\n\n".join(sections)
-    for heading, claims in list_detail_sections(report, assessment):
-        if claims:
-            sections.append(f"## {heading}\n" + render_claims(claims, numbers))
-    sections.append(
-        "## Limitations\n" + render_limitations(assessment, failed_reads, notes)
-    )
-    sections.append(render_sources_section(numbers))
+    else:
+        sentences: list[str] = [render_cited_claim(claim, numbers) for claim in report.summary]
+        if assessment.reason:
+            sentences.append(assessment.reason)
+        sentences.extend(notes)
+        sections.append(" ".join(sentences))
+    if comparing or not detailed:
+        represented: set[SourceGroup | None] = {
+            group_for_outlet(article.outlet_id) for article in articles
+        }
+        sides: str = (
+            render_comparison(alignment, numbers) if alignment
+            else render_unaligned_sides(frozenset(set(SourceGroup) - represented))
+        )
+        if sides:
+            sections.append(sides)
+    if detailed:
+        for heading, claims in list_detail_sections(report, assessment):
+            if claims:
+                sections.append(f"## {heading}\n" + render_claims(claims, numbers))
+        if notes:
+            sections.append(" ".join(notes))
+    if numbers.sources():
+        sections.append(render_sources_section(numbers))
     return "\n\n".join(sections)
 
 
@@ -379,34 +407,34 @@ def render_no_evidence_answer(
     return "\n\n".join(lines)
 
 
-def render_event_options(
-    events: list[EventCandidate],
+def render_topic_options(
+    found: tuple[TopicOption, ...],
+    related: tuple[TopicOption, ...],
     window: tuple[date, date],
-    maximum: int = 3,
+    query: str,
 ) -> str:
     """
-    Render attributed event choices or suggest a broader query when the list is empty.
+    Render the topic choices, saying so plainly when nothing matched the request.
     """
+    shown: tuple[TopicOption, ...] = (*found, *related)[:MAX_TOPICS_SHOWN]
+    subject: str = f" for “{query}”" if query else ""
+    if not shown:
+        return f"No matches found{subject}. Try a broader subject or a wider date range."
     lines: list[str] = []
-    for number, event in enumerate(events[:maximum], start=1):
-        others: list[str] = [
-            outlet_display_name(outlet) for outlet in event.outlet_ids
-            if outlet != event.headline_outlet
-        ]
-        dates: str = f"{event.first_date:%b} {event.first_date.day}"
-        if event.last_date != event.first_date:
-            dates += f" to {event.last_date:%b} {event.last_date.day}"
-        title: str = " ".join(event.headline.split())
-        headline: str = re.sub(r"([\\`*_\[\]<>])", r"\\\1", title)
+    if not found and query:
+        lines.append(f"No matches found{subject}. Here are the closest related topics:")
+    elif len(found) < 2 and found:
+        lines.append("I found one matching topic, plus related ones:")
+    else:
+        lines.append("Which of these topics would you like compared?")
+    lines.append("")
+    for number, option in enumerate(shown, start=1):
         question_text: str = (
-            f"How did different outlets cover “{title}” "
+            f"How did different outlets cover “{option.label}” "
             f"from {window[0].isoformat()} to {window[1].isoformat()}?"
         )
-        selection: str = quote(question_text, safe="")
-        attribution: str = f" Also reported by {', '.join(others)}." if others else ""
         lines.append(
-            f"{number}. {outlet_display_name(event.headline_outlet)} headline: "
-            f"“{headline}”{attribution} ({dates}) "
-            f"[Compare story {number}](#compare-event={selection}&headline={quote(title, safe='')})"
+            f"{number}. [{option.label}](#compare-event={quote(question_text, safe='')}"
+            f"&headline={quote(option.label, safe='')})"
         )
-    return "\n".join(lines) if lines else "Try a broader location or a wider date range."
+    return "\n".join(lines)
