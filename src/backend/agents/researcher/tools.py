@@ -17,6 +17,7 @@ from backend.application.turn.tool_calls import ToolCallOutcome
 from backend.application.turn.request_budget import BudgetResource
 from backend.application.evidence.outlet_assignments import outlets_for_group
 from backend.sources.access import (
+    ArticleCandidate,
     ArticleReadResult,
     ArticleSearchResult,
     SourceAccessOutcome,
@@ -46,19 +47,26 @@ class GroupSourceTools:
         """Discover candidate articles for the assigned outlets and window."""
         result: ArticleSearchResult
         if self._state.budget.try_consume(BudgetResource.SEARCH_CALLS):
-            try:
-                result = await asyncio.to_thread(
-                    self._state.sources.search_articles,
-                    query,
-                    self._window[0],
-                    self._window[1],
-                    self._outlets,
+            if self._state.issue is not None:
+                candidates: tuple[ArticleCandidate, ...] = tuple(
+                    article for article in self._state.issue.candidates
+                    if article.outlet_id in self._outlets
                 )
-            except ValueError:
-                result = self._build_search_failure(
-                    SourceAccessStatus.FETCH_FAILED,
-                    "The search request was not valid.",
+                represented: set[str] = {article.outlet_id for article in candidates}
+                result = ArticleSearchResult(
+                    candidates=candidates,
+                    outcomes=tuple(
+                        SourceAccessOutcome(
+                            outlet_id=outlet,
+                            status=(SourceAccessStatus.SUCCESS if outlet in represented
+                                    else SourceAccessStatus.NO_RESULTS),
+                            detail="Candidates matched to the selected issue in the feed snapshot.",
+                        )
+                        for outlet in self._outlets
+                    ),
                 )
+            else:
+                result = await self._search_assigned_feeds(query)
         else:
             result = self._build_search_failure(
                 SourceAccessStatus.BUDGET_EXHAUSTED,
@@ -66,6 +74,22 @@ class GroupSourceTools:
             )
         self._record_search(query, result)
         return result
+
+    async def _search_assigned_feeds(self, query: str) -> ArticleSearchResult:
+        """Search the group's feeds for older, text-only comparisons."""
+        try:
+            return await asyncio.to_thread(
+                self._state.sources.search_articles,
+                query,
+                self._window[0],
+                self._window[1],
+                self._outlets,
+            )
+        except ValueError:
+            return self._build_search_failure(
+                SourceAccessStatus.FETCH_FAILED,
+                "The search request was not valid.",
+            )
 
     def _build_search_failure(
         self,
@@ -84,14 +108,18 @@ class GroupSourceTools:
         """
         Read and save one article, retrying only transient fetch failures.
         """
-        if outlet_id not in self._outlets:
+        issue = self._state.issue
+        if outlet_id not in self._outlets or (
+            issue is not None
+            and not any(article.outlet_id == outlet_id and article.url == url for article in issue.candidates)
+        ):
             return self._finish_read(
                 ArticleReadResult(
                     outcome=SourceAccessOutcome(
                         outlet_id=outlet_id,
                         status=SourceAccessStatus.ACCESS_DENIED,
                         url=url,
-                        detail="This outlet is not assigned to this researcher.",
+                        detail="This article is outside the research assignment.",
                     )
                 ),
                 url,

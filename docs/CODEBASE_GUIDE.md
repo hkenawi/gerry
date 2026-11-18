@@ -268,36 +268,28 @@ for follow-ups. [Researcher agent](../src/backend/agents/researcher/agent.py) ·
 
 ### Choosing a topic
 
-Every new conversation starts with a topic step that code owns, so the Lead cannot
-skip it. `run_turn()` runs it whenever the conversation has no saved research and
-the message is not already a chosen topic (`How did different outlets cover “X” from
-A to B?`, which is also what a front-page headline sends). A reader who types
-again after seeing options therefore gets a fresh set of options.
+For fresh questions, the topic discovery agent checks current feeds and resolves the
+scope. A bounded issue goes directly to the Lead. A broad query gets narrower choices,
+and an individual headline can get a broader issue to confirm. Date requests get a
+notice about feed scope. The home edition and top-three fallback use the same issue
+grouping. The home edition publishes only scoped issues. In chat, word-overlap
+suggestions can still lead to a new scope discovery if issue grouping is unavailable.
 
-1. A planner agent reads the request and returns the subject words and, if stated,
-   the period (default: one month back).
-2. `discover_headlines()` lists dated headlines from all approved outlets.
-3. A clusterer agent receives up to 40 numbered headlines and groups them into 2 to
-   5 neutral topics, each with a short label and headline numbers.
-4. Code validates the output (every number must exist and appear once; a topic
-   must span at least two outlets), drops what fails, and ranks by outlet count.
-   One correction attempt is allowed for invalid numbers.
-5. With fewer than two valid topics, the unfiltered recent headlines are clustered and
-   the topics closest to the request words fill the list. With none at all, the reply
-   says "No matches found" and still lists the closest related topics.
+Proposals contain a neutral label, scope description, and numbered feed candidates.
+The application validates the references and publishes choices with opaque IDs. When
+the reader selects one, both researchers get the saved scope and their outlets'
+candidates from that same snapshot. The resulting issue remains attached to the
+conversation's research for follow-ups.
 
-Each option is a link the browser turns into a button. Its question carries the label
-and the window, so the Lead researches exactly the chosen topic and period. The
-searches use the shared search budget and are recorded as `search_recent_events` and
-`group_topics` calls. [Topic step](../src/backend/application/turn/topic_step.py) ·
-[Clustering rules](../src/backend/application/evidence/topic_clusters.py) ·
-[Topic agents](../src/backend/agents/topics/agent.py)
+[Issue discovery](../src/backend/application/turn/topic_step.py) ·
+[Turn routing](../src/backend/application/turn/run_turn.py) ·
+[Researcher source tools](../src/backend/agents/researcher/tools.py)
 
 ### Briefing and detailed report
 
-The Lead calls `write_answer` with the reader's question and an alignment
-table. Each row labels an aspect as a central focus, a passing mention, or
-absent in each group's sample. Central and
+The Lead calls `write_answer` with the reader's question and an aspect alignment.
+Each item records where the aspect was central, mentioned in passing, or absent
+from the sample. Central and
 incidental treatments require passage IDs. The answer workflow checks those
 citations against the group they describe before invoking the Writer.
 
@@ -317,12 +309,11 @@ article by ID in the current conversation. It can return metadata such as
 bylines and publication dates along with the passages. It does not contact a
 publisher.
 
-With `detailed` set, which the Lead does when the reader asks for a full report or
-more depth, the Writer may also return attributed accounts, reporting discrepancies,
-and a timeline. A briefing rejects those lists, and a one-sided sample rejects
-discrepancies. The renderer adds them as sections and the briefing stays complete
-either way. A follow-up for a detailed report reuses the saved findings and runs
-targeted research only for a gap.
+The briefing opens with a short account of the issue, then shows takeaways on
+overlap and differences followed by aspect cards. The renderer puts excerpts
+under Sources. A direct follow-up answers just the new question from the saved
+evidence, with targeted research only for a gap. An explicit request for a full
+report can also include reporting discrepancies and a timeline.
 
 The Writer returns a report with cited summary claims and, when allowed,
 overlap and differences. It can instead request a specific evidence gap.
@@ -439,15 +430,12 @@ findings cited. [Article contract](../src/backend/sources/articles/contracts.py)
 
 ## 7. Rendering and citation behavior
 
-The renderer builds the briefing from the structured report, validated
-alignment, and sample assessment. It produces a cited summary, a comparison table, and a numbered source list. The
-table has one row per aspect and a cell per side: an emphasis marker (●●● central,
-●○○ brief, ○○○ none), then a short note, separated by " · ". The page turns the
-table into stacked rows with the marker above the note. Every sentence and cell
-carries an in-text number such as [1]. There is no Limitations section: the only
-caveat kept is one line when a side had no usable articles. With no aspects but a side
-missing, each side gets its own short block saying what happened. A no-coverage result has its own simpler
-layout.
+The renderer builds a cited factual summary, coverage takeaways, aspect cards, and
+a numbered source list. An aspect qualifies when it is the main focus of any sampled
+article. Cards attribute the emphasis to named outlets and distinguish it from
+passing mentions. The browser collapses additional cards under **More aspects**.
+Thin or uneven samples get a small footnote, and one-sided results describe the
+coverage actually available. A no-coverage result has its own simpler layout.
 
 A reference like `[2]` identifies an article in the rendered answer. Numbers
 follow first citation order across the sections. Several passages from the

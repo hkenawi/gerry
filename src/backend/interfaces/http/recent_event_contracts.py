@@ -1,8 +1,9 @@
 """Define the dated edition and attributed headlines returned to the front page.
 
 The HTTP layer translates approved outlet IDs into display names before sending
-these models. The browser uses each reporting window to draft a chat question."""
+these models. The browser uses the edition date to label the front page."""
 
+from uuid import UUID
 from datetime import date
 from pydantic import BaseModel
 
@@ -16,11 +17,11 @@ class RecentStory(BaseModel):
     first_date: date
     last_date: date
     snippet: str | None
+    issue_id: UUID | None = None
 
 
 class RecentEdition(BaseModel):
-    """A recent discovery window with up to five multi-outlet stories."""
+    """A current-feed edition with up to five multi-outlet stories."""
 
-    start_date: date
     end_date: date
     events: list[RecentStory]

@@ -43,6 +43,7 @@ let sending = false;
 let connected = false;
 let startingNewStory = false;
 let draftedHeadline = "";
+let draftedIssue = null;
 
 async function checkConnection() {
   checkButton.hidden = true;
@@ -62,13 +63,14 @@ function formatEditionDate(date) {
   return dateFormatter.format(new Date(date));
 }
 
-function renderStory(story, edition) {
+function renderStory(story) {
   const item = document.createElement("li");
   const button = document.createElement("button");
   button.type = "button";
   button.className = "story";
   button.dataset.headline = story.headline;
-  button.dataset.question = `How did different outlets cover “${story.headline}” from ${edition.start_date} to ${edition.end_date}?`;
+  if (story.issue_id) button.dataset.issueId = story.issue_id;
+  button.dataset.question = `How did different outlets cover “${story.headline}”?`;
   const title = document.createElement("span");
   title.className = "story-title";
   title.textContent = story.headline;
@@ -83,20 +85,20 @@ function renderStory(story, edition) {
 async function loadEdition() {
   retryStories.hidden = true;
   storiesStatus.hidden = false;
-  storiesStatus.textContent = "Loading recent headlines…";
+  storiesStatus.textContent = "Loading recent issues…";
   try {
     const response = await fetch("/recent-events");
     if (!response.ok) throw new Error("Recent headlines unavailable");
     const edition = await response.json();
-    const stories = edition.events.map((story) => renderStory(story, edition));
+    const stories = edition.events.map(renderStory);
     const dateLabel = formatEditionDate(edition.end_date);
     storyList.replaceChildren(...stories);
     editionDate.dateTime = edition.end_date;
     editionDate.textContent = dateLabel;
     editionDate.hidden = false;
-    storyRule.textContent = "Headlines reported by at least two approved outlets in the past month, ranked by outlet count.";
+    storyRule.textContent = "Issues in the current feeds, ranked by how many approved outlets reported on them.";
     storyRule.hidden = false;
-    storiesStatus.textContent = stories.length ? "" : "No recent headlines matched this rule.";
+    storiesStatus.textContent = stories.length ? "" : "No issue comparisons are ready yet. You can still ask about a topic.";
     storiesStatus.hidden = stories.length > 0;
     updateControls();
   } catch {
@@ -126,33 +128,34 @@ function showError(message, toolCalls = []) {
   if (toolCalls.length) errorTools.append(renderToolCalls(toolCalls));
 }
 
-function formatComparison(table) {
-  const headings = Array.from(table.querySelectorAll("thead th"), cell => cell.textContent.trim());
-  if (headings.join("|") !== "Aspect|Liberal outlets|Conservative outlets") return;
-  table.classList.add("coverage-compare");
-  for (const row of table.querySelectorAll("tbody > tr")) {
-    Array.from(row.children).forEach((cell, index) => {
-      cell.dataset.label = headings[index] ?? "";
-      if (index === 0) return;
-      const match = cell.textContent.trim().match(/^([●○]{3})\s+(\S+)\s*(?:·\s*)?(.*)$/s);
-      if (!match) return;
-      const [, dots, label, rest] = match;
-      const emphasis = document.createElement("span");
-      emphasis.className = `emphasis emphasis-${(dots.match(/●/g) ?? []).length}`;
-      const marker = document.createElement("span");
-      marker.className = "dots";
-      marker.setAttribute("aria-hidden", "true");
-      marker.textContent = dots;
-      emphasis.append(marker, label);
-      const note = document.createElement("span");
-      note.className = "coverage-note";
-      note.textContent = rest.trim();
-      cell.replaceChildren(emphasis, note);
-    });
-  }
-  const legend = table.nextElementSibling;
-  if (legend?.matches("p") && legend.textContent.trim().startsWith("●●●")) {
-    legend.classList.add("coverage-legend");
+function formatAspectCards(article) {
+  for (const heading of article.querySelectorAll(":scope > h2")) {
+    const title = heading.textContent.trim();
+    if (title !== "Coverage aspects" && title !== "More aspects") continue;
+    const expandable = title === "More aspects";
+    const group = document.createElement(expandable ? "details" : "section");
+    group.className = expandable ? "coverage-aspects more-aspects" : "coverage-aspects";
+    heading.before(group);
+    let next = heading.nextElementSibling;
+    if (expandable) {
+      const summary = document.createElement("summary");
+      summary.textContent = title;
+      group.append(summary);
+      heading.remove();
+    } else {
+      group.append(heading);
+    }
+    while (next?.matches("h3")) {
+      const liberal = next.nextElementSibling;
+      const conservative = liberal?.nextElementSibling;
+      if (!liberal?.querySelector("strong") || !conservative?.querySelector("strong")) break;
+      const card = document.createElement("section");
+      card.className = "coverage-aspect";
+      const following = conservative.nextElementSibling;
+      card.append(next, liberal, conservative);
+      group.append(card);
+      next = following;
+    }
   }
 }
 
@@ -188,6 +191,7 @@ function renderAnswer(answer, turnNumber) {
       choice.className = "story topic-choice";
       choice.dataset.eventQuestion = question;
       choice.dataset.headline = params.get("headline") ?? "";
+      if (params.has("issue")) choice.dataset.issueId = params.get("issue");
       choice.append(title);
       const row = document.createElement("li");
       row.append(choice);
@@ -197,7 +201,7 @@ function renderAnswer(answer, turnNumber) {
     list.replaceWith(choices);
   }
 
-  for (const table of article.querySelectorAll("table")) formatComparison(table);
+  formatAspectCards(article);
 
   if (!sources) return article;
 
@@ -391,30 +395,33 @@ function resetConversation() {
   retryPayload = null;
   startingNewStory = false;
   draftedHeadline = "";
+  draftedIssue = null;
   transcript.replaceChildren();
   storyHeadline.hidden = true;
   storyHeadline.textContent = "";
   newspaper.classList.remove("story-view");
 }
 
-function submitQuestion(content, headline = "", fromInput = false) {
+function submitQuestion(content, headline = "", fromInput = false, issueId = null) {
   if (!connected || !content || sending || retryPayload) return;
   if (startingNewStory) resetConversation();
   draftedHeadline = "";
+  draftedIssue = null;
   const restoreText = fromInput ? input.value : null;
   if (fromInput) input.value = "";
   void sendMessage({
     conversation_id: conversationId,
     request_id: crypto.randomUUID(),
     messages: [...messages, { role: "user", content }],
+    ...(issueId ? { issue_id: issueId } : {}),
   }, headline, restoreText);
 }
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   const content = input.value.trim();
-  const headline = draftedHeadline && content.includes(`“${draftedHeadline}”`) ? draftedHeadline : "";
-  submitQuestion(content, headline, true);
+  const isDraft = draftedHeadline && content === `How did different outlets cover “${draftedHeadline}”?`;
+  submitQuestion(content, isDraft ? draftedHeadline : "", true, isDraft ? draftedIssue : null);
 });
 
 input.addEventListener("keydown", (event) => {
@@ -438,10 +445,11 @@ storyList.addEventListener("click", (event) => {
   if (!button || button.disabled) return;
   if (!storyHeadline.hidden) {
     startingNewStory = true;
-    submitQuestion(button.dataset.question, button.dataset.headline);
+    submitQuestion(button.dataset.question, button.dataset.headline, false, button.dataset.issueId);
     return;
   }
   draftedHeadline = button.dataset.headline;
+  draftedIssue = button.dataset.issueId;
   input.value = button.dataset.question;
   updateControls();
   input.focus();
@@ -450,7 +458,7 @@ transcript.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-event-question]");
   if (!button || button.disabled) return;
   startingNewStory = true;
-  submitQuestion(button.dataset.eventQuestion, button.dataset.headline);
+  submitQuestion(button.dataset.eventQuestion, button.dataset.headline, false, button.dataset.issueId);
 });
 retryButton.addEventListener("click", () => { void sendMessage(retryPayload); });
 checkButton.addEventListener("click", checkConnection);

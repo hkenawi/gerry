@@ -11,9 +11,9 @@
 ## Project description
 
 Gerry the Manderer is a chatbot for readers who want to see how liberal and
-conservative U.S. news outlets cover the same international story. Give it an
-event and a date range, or ask it to suggest recent headlines. Gerry searches
-a fixed list of ten outlets, including NPR, NBC News, Fox News, and the New York
+conservative U.S. news outlets cover the same international story. Give it a
+subject or ask it to suggest recent headlines. Gerry checks the current publisher
+feeds of ten outlets, including NPR, NBC News, Fox News, and the New York
 Post. It compares what the sampled articles emphasize and where they overlap,
 with citations you can open to read the supporting excerpts.
 
@@ -38,11 +38,12 @@ gerry/
 
 ## Tools
 
-- **Topic step** (code, before the Lead runs) finds dated headlines, has a model cluster them into
-  2 to 5 neutral topics, and asks the reader to pick one. It runs on every new request.
-- **`research_liberal_coverage`** runs a researcher on the liberal outlet group for a given event and date range.
-- **`research_conservative_coverage`** runs a researcher on the conservative outlet group for the same event and date range.
-- **`search_articles`** finds candidate articles in the researcher's assigned outlet feeds and available archives.
+- **Topic step** resolves a bounded issue from current feeds. It asks for a choice when the
+  request needs a narrower or broader scope, and carries the matched articles into research.
+  If a subject has no comparison topics, it offers up to three stories ranked by outlet count.
+- **`research_liberal_coverage`** runs a researcher on the liberal outlet group's current coverage.
+- **`research_conservative_coverage`** runs a researcher on the conservative outlet group's current coverage.
+- **`search_articles`** finds candidates in the researcher's assigned outlet feeds.
 - **`read_article`** fetches and extracts the article text used as evidence.
 - **`write_answer`** turns the findings into a side-by-side briefing or a detailed report with citations.
 
@@ -63,8 +64,8 @@ uv run python main.py
 
 Open the [chat interface](http://127.0.0.1:8080) or the
 [API explorer](http://127.0.0.1:8080/docs). In the chat, type a question and
-press Enter (or **Send**), then pick one of the proposed topics to research. You can also pick a
-headline from **Recent headlines**. Click a citation number to see its excerpt. Ask follow-up
+press Enter (or **Send**). Choose an issue if Gerry offers suggestions, or select
+one from the front page. Click a citation number to see its excerpt. Ask follow-up
 questions in the same chat: simple factual ones are answered from the saved articles, and open-ended ones
 start new research.
 

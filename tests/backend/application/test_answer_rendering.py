@@ -86,8 +86,8 @@ def test_claims_render_with_numbered_citations_and_a_source_list(
     assert "Protesters gathered in Paris. [1][1]" not in answer
     assert "Police later issued a statement. [1]" in answer
     assert "Fox emphasised property damage. [2]" in answer
-    assert "| Police response | ●●● central · Led with injuries. [1] | ○○○ none |" in answer
-    assert "*●●● central focus  ●○○ mentioned briefly  ○○○ not in the sampled articles*" in answer
+    assert "**Liberal coverage:** Main focus at NPR online news [1]. Led with injuries." in answer
+    assert "**Conservative coverage:** Not found in the sampled articles." in answer
     assert f"{liberal.canonical_url}" in answer
     assert f"{conservative.canonical_url}" in answer
 
@@ -157,11 +157,8 @@ def test_a_side_with_no_articles_is_stated_in_one_plain_line(make_article) -> No
     )
 
     assert "No conservative articles could be retrieved" in answer
-    assert "### Liberal outlets\n- See the summary above." in answer
-    assert (
-        "### Conservative outlets\n- No articles could be retrieved from conservative outlets."
-        in answer
-    )
+    assert "Choose another issue from the front page" in answer
+    assert "*Sample: 1 liberal article from 1 outlet and 0 conservative articles from 0 outlets.*" in answer
 
 
 def test_a_briefing_cites_its_sentences_and_comparison_cells_by_number(make_article) -> None:
@@ -190,8 +187,21 @@ def test_a_briefing_cites_its_sentences_and_comparison_cells_by_number(make_arti
             ),
         ),
     ]
+    opening = Claim(
+        text="Protests occurred.",
+        passage_ids=[liberal.passages[0].passage_id],
+        quotes=[{"text": "A specific excerpt", "passage_id": liberal.passages[0].passage_id}],
+    )
     report = WriterReport(
-        summary=[Claim(text="Protests occurred.", passage_ids=[liberal.passages[0].passage_id])]
+        summary=[opening, opening],
+        overlap=[Claim(
+            text="Both outlets covered the police response.",
+            passage_ids=[liberal.passages[0].passage_id, conservative.passages[0].passage_id],
+        )],
+        differences=[Claim(
+            text="Fox gave the economic cost more attention.",
+            passage_ids=[conservative.passages[1].passage_id],
+        )],
     )
 
     answer = render_answer(
@@ -199,10 +209,19 @@ def test_a_briefing_cites_its_sentences_and_comparison_cells_by_number(make_arti
         articles=(liberal, conservative), failed_reads=[],
     )
 
-    assert answer.startswith("Protests occurred. [1]")
-    assert "| Police response | ●●● central · Led with injuries. [1] | ●○○ brief · Noted the arrests. [2] |" in answer
-    assert "| Economic cost | ○○○ none | ●●● central [2] |" in answer
-    assert "## Sources\n1. " in answer
+    body, sources = answer.split("## Sources\n", 1)
+    assert body.startswith("Protests occurred. [1]\n\n")
+    assert body.count("Protests occurred.") == 1
+    assert "A specific excerpt" not in body
+    assert "> A specific excerpt" in sources
+    assert "**Liberal coverage:** Main focus at NPR online news [1]. Led with injuries." in answer
+    assert "**Conservative coverage:** Mentioned by Fox News Digital [2]. Noted the arrests." in answer
+    assert "### Economic cost" in answer
+    assert (
+        body.index("## Where coverage overlaps\nBoth outlets covered the police response. [1][2]")
+        < body.index("## Where coverage differs\nFox gave the economic cost more attention. [2]")
+        < body.index("## Coverage aspects")
+    )
 
 
 def test_without_aspects_no_contrast_or_difference_is_invented(make_article) -> None:
@@ -222,6 +241,34 @@ def test_without_aspects_no_contrast_or_difference_is_invented(make_article) -> 
 
     assert "No clear difference" not in answer
     assert "### Liberal outlets" not in answer
+
+
+def test_aspect_overflow_keeps_single_outlet_focuses_available(make_article) -> None:
+    """Show a few cards up front and keep additional main focuses available."""
+    liberal = make_article("npr")
+    conservative = make_article("fox")
+    passage_id: str = liberal.passages[0].passage_id
+    alignment: list[AspectAlignment] = [
+        AspectAlignment(
+            aspect=aspect,
+            liberal=AspectTreatment(state="central_focus", passage_ids=[passage_id]),
+            conservative=AspectTreatment(state="not_in_sample"),
+        )
+        for aspect in ("Public safety", "Aid access", "Regional diplomacy", "Border policy")
+    ]
+    answer: str = render_answer(
+        report=WriterReport(summary=[Claim(text="Recent developments.", passage_ids=[passage_id])]),
+        alignment=alignment,
+        assessment=assess((liberal,), (conservative,)),
+        articles=(liberal, conservative),
+        failed_reads=[],
+    )
+    featured, remaining = answer.split("## More aspects", 1)
+    assert featured.count("### ") == 3
+    assert "### Border policy" in remaining
+    assert "**Liberal coverage:** Main focus at NPR online news [1]." in remaining
+    assert "**Conservative coverage:** Not found in the sampled articles." in remaining
+    assert "*Sample: 1 liberal article from 1 outlet and 1 conservative article from 1 outlet.*" in remaining
 
 
 def test_opinion_articles_are_labelled_in_the_source_list(make_article) -> None:

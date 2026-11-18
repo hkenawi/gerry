@@ -14,9 +14,10 @@ How to work:
 3. Aim for at least two reporting articles from at least two different outlets.
    If an outlet fails, try other outlets in your group. Stop when you have enough
    or when nothing more can be found. Do not keep searching for its own sake.
-4. For each article, decide its main focus. An article may have more than one
-   central focus. Justify each with supporting passage IDs. A passing mention is
-   not a main focus. Headline wording alone does not establish a focus.
+4. Assess each article's overall emphasis. Report an aspect as a main focus only
+   if it belongs to the assigned issue and is a main point of the article. An
+   article can have more than one main point. Cite the passages that support each
+   one. A passing mention or headline wording alone cannot establish a main focus.
 5. Record attributed accounts (who said or reported what) with passage IDs.
    When two articles give different figures or accounts, report both and
    attribute each. Do not decide which is true and do not average them.

@@ -1,40 +1,43 @@
-"""
-Structured outputs of the topic-scout agents.
+"""Define structured topic proposals returned by the topic discovery agent.
 
-The planner turns a reader's request into a headline search. The clusterer groups
-numbered headlines into a few neutral topics. Code validates both outputs, so a
-topic can only ever point at headlines that were really found.
-"""
+The application validates headline numbers against the search hits before it
+creates topic choices for the reader."""
 
-from datetime import date
-
+from enum import StrEnum
+from dataclasses import dataclass
 from pydantic import Field, BaseModel
 
 MAX_TOPICS: int = 5
 
 
-class TopicSearch(BaseModel):
-    """
-    The headline search implied by the reader's request.
-    """
+class IssueResolution(StrEnum):
+    """Indicate whether to research now or invite the reader to refine the scope."""
 
-    topic: str | None = None
-    start_date: date | None = None
-    end_date: date | None = None
+    NARROW = "narrow"
+    BROADEN = "broaden"
+    READY = "ready"
+
+
+@dataclass(frozen=True)
+class TopicResolutionConstants:
+    """Expose discovery routing vocabulary shared with the turn workflow."""
+
+    resolutions: type[IssueResolution] = IssueResolution
+
+
+TOPIC_RESOLUTION: TopicResolutionConstants = TopicResolutionConstants()
 
 
 class ProposedTopic(BaseModel):
-    """
-    One neutral topic label and the numbers of the headlines it groups.
-    """
+    """A neutral topic label and the numbers of the headlines it groups."""
 
     label: str = Field(min_length=3, max_length=90)
+    description: str = Field(default="", max_length=320)
     headline_numbers: list[int] = Field(min_length=1)
 
 
 class TopicProposal(BaseModel):
-    """
-    The clusterer's proposed topics, at most five.
-    """
+    """The discovery agent's proposed headline groups, at most five."""
 
     topics: list[ProposedTopic] = Field(default_factory=list, max_length=MAX_TOPICS)
+    resolution: IssueResolution = TOPIC_RESOLUTION.resolutions.NARROW

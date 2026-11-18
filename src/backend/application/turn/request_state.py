@@ -16,6 +16,7 @@ from dataclasses import field, dataclass
 from backend.application.settings import Settings
 from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
+from backend.agents.research_issue import ResearchIssue
 from backend.infrastructure.persistence import InMemoryStore
 from backend.application.turn.request_budget import RequestBudget
 from backend.agents.researcher_findings import SourceGroup, ResearcherFindings
@@ -91,10 +92,12 @@ class RequestState:
     recorder: ToolCallRecorder
     failed_reads: list[SourceAccessOutcome] = field(default_factory=list)
     brief: ResearchBrief | None = None
+    issue: ResearchIssue | None = None
     final_answer: str | None = None
     writer_calls: int = 0
     reusing_research: bool = False
     previous_answers: tuple[str, ...] = ()
+    reader_question: str = ""
     research_slots: asyncio.Semaphore = field(init=False)
     findings: dict[SourceGroup, list[ResearcherFindings]] = field(
         default_factory=lambda: {group: [] for group in SourceGroup}
@@ -146,6 +149,7 @@ def build_request_state(
     if brief.start_date is not None and brief.end_date is not None:
         state.reusing_research = True
         state.brief = brief
+        state.issue = store.load_research_issue(conversation_id)
         for item in findings:
             state.findings[item.group].append(item)
     return state

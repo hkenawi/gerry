@@ -29,8 +29,11 @@ def build_discovery_urls(
     end_date: date,
     limits: SourceLimits,
 ) -> tuple[tuple[str, ...], str]:
-    """Select bounded archive pages for older periods, otherwise current feeds."""
-    if end_date >= datetime.now(UTC).date() - timedelta(days=7):
+    """Select current feeds for feed lookups or bounded archives for dated searches."""
+    if (
+        start_date == SOURCE_CONSTANTS.feed_start_date
+        or end_date >= datetime.now(UTC).date() - timedelta(days=7)
+    ):
         return outlet.feed_urls, "Searched current feed entries; completeness is unknown."
     urls: list[str] = []
     cursor: date = start_date
@@ -65,6 +68,12 @@ def _matches_query(title: str, snippet: str, query: str) -> bool:
     A blank query matches every entry, for listing headlines in a period."""
     if not query.strip():
         return True
+    if "|" in query:
+        return any(
+            _matches_query(title, snippet, variant)
+            for variant in query.split("|")
+            if variant.strip()
+        )
     ignored: frozenset[str] = frozenset({
         "the", "and", "for", "with", "about", "coverage", "compare", "news",
         "event", "from", "between",

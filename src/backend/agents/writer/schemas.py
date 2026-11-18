@@ -6,8 +6,17 @@ produce the final Markdown; application code renders and validates the answer so
 citations and layout stay consistent.
 """
 
+from enum import StrEnum
 from typing import Self
 from pydantic import Field, BaseModel, model_validator
+
+
+class WriterReportType(StrEnum):
+    """Choose the visible layout and scope of the Writer's answer."""
+
+    BRIEFING = "briefing"
+    FOLLOW_UP = "follow-up"
+    DETAILED = "detailed"
 
 
 class PassageQuote(BaseModel):
@@ -31,13 +40,12 @@ class WriterReport(BaseModel):
     """
     The Writer's findings: a summary, shared ground, and differences.
 
-    A detailed report may add attributed accounts, reporting discrepancies, and a timeline.
+    A detailed report may add reporting discrepancies and a timeline.
     """
 
     summary: list[Claim] = Field(default_factory=list)
     overlap: list[Claim] = Field(default_factory=list)
     differences: list[Claim] = Field(default_factory=list)
-    accounts: list[Claim] = Field(default_factory=list)
     discrepancies: list[Claim] = Field(default_factory=list)
     timeline: list[Claim] = Field(default_factory=list)
     evidence_gap: str | None = Field(default=None, min_length=1)

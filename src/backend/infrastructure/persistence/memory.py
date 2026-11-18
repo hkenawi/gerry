@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace
 
 from backend.sources.articles import ArticleRecord
 from backend.agents.research_brief import ResearchBrief
+from backend.agents.research_issue import ResearchIssue
 from backend.agents.researcher_findings import ResearcherFindings
 from backend.interfaces.http.chat_contracts import (
     ChatRequest,
@@ -61,6 +62,7 @@ class _ConversationState:
     history: tuple[ChatMessage, ...] = ()
     articles: dict[UUID, ArticleRecord] = field(default_factory=dict)
     research: tuple[ResearchBrief, tuple[ResearcherFindings, ...]] | None = None
+    issue: ResearchIssue | None = None
     active_request_id: str | None = None
 
 
@@ -73,6 +75,26 @@ class InMemoryStore:
         self._lock: LockType = Lock()
         self._requests: dict[str, RequestRecord] = {}
         self._conversations: dict[str, _ConversationState] = {}
+        self._issues: dict[UUID, ResearchIssue] = {}
+
+    def publish_issue(self, issue: ResearchIssue) -> UUID:
+        """Publish a feed-based issue under an opaque selection ID with bounded retention."""
+        issue_id: UUID = uuid4()
+        with self._lock:
+            self._issues[issue_id] = issue
+            if len(self._issues) > max(5, self._max_conversations * 10):
+                del self._issues[next(iter(self._issues))]
+        return issue_id
+
+    def load_issue(self, issue_id: UUID) -> ResearchIssue | None:
+        """Load the published scope and candidate set without trusting client content."""
+        with self._lock:
+            return self._issues.get(issue_id)
+
+    def load_research_issue(self, conversation_id: str) -> ResearchIssue | None:
+        """Get the scope of the issue already being researched in a conversation."""
+        with self._lock:
+            return self._conversations[conversation_id].issue
 
     def begin_request(self, request: ChatRequest) -> tuple[RequestRecord, bool]:
         """Return a request record and whether the caller owns new work."""
@@ -204,11 +226,15 @@ class InMemoryStore:
         conversation_id: str,
         brief: ResearchBrief,
         findings: tuple[ResearcherFindings, ...],
+        *,
+        issue: ResearchIssue | None = None,
     ) -> None:
         """Save a detached research brief and findings for an existing session."""
         with self._lock:
             conversation: _ConversationState = self._conversations[conversation_id]
             conversation.research = deepcopy((brief, findings))
+            if issue is not None:
+                conversation.issue = issue
 
     def load_research(
         self, conversation_id: str,

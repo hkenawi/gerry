@@ -15,7 +15,7 @@ from agents.models.interface import Model
 from agents import Agent, ModelSettings, RunContextWrapper, function_tool
 
 from backend.sources.articles import ArticleRecord
-from backend.agents.writer.schemas import WriterReport
+from backend.agents.writer.schemas import WriterReport, WriterReportType
 from backend.agents.lead.schemas import AspectAlignment
 from backend.agents.research_brief import ResearchBrief
 from backend.application.turn.request_state import RequestState
@@ -103,22 +103,22 @@ def build_writer_input(
     alignment: list[AspectAlignment],
     findings: list[ResearcherFindings],
     articles: tuple[ArticleRecord, ...],
-    detailed: bool = False,
+    report_type: WriterReportType,
     *,
     previous_answers: tuple[str, ...] = (),
+    issue_scope: str = "",
 ) -> str:
     """Assemble the evidence and any prior answers the Writer should expand on."""
-    report_type: str = "detailed" if detailed else "briefing"
     prior_context: str = ""
     if previous_answers:
-        report_type = "follow-up"
         prior_context = (
             "\n\nPreviously shown answers:\n" + json.dumps(previous_answers)
         )
     return (
         f"Reader's question: {question}\n"
-        f"Report type: {report_type}\n"
+        f"Report type: {report_type.value}\n"
         f"Event: {brief.event}\n"
+        f"Issue scope: {issue_scope or brief.event}\n"
         f"Answer mode: {assessment.mode.value}\n"
         f"Mode reason: {assessment.reason or 'none'}\n"
         f"Sample: {assessment.sample_statement}\n\n"

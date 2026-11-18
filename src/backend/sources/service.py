@@ -116,9 +116,9 @@ class ArticleSourceService:
                         SOURCE_CONSTANTS.access_statuses.FETCH_FAILED,
                         "Discovery document could not be fetched or parsed.",
                     )
-            selected: list[ArticleCandidate] = list(found.values())[
-                :self._limits.max_results_per_outlet
-            ]
+            selected: list[ArticleCandidate] = list(found.values())
+            if query or start_date != SOURCE_CONSTANTS.feed_start_date:
+                selected = selected[:self._limits.max_results_per_outlet]
             candidates.extend(selected)
             status: SourceAccessStatus = SOURCE_CONSTANTS.access_statuses.NO_RESULTS
             http_status: int | None = None

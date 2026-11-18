@@ -9,17 +9,17 @@ without inventing any. Headlines about one event share several distinctive words
 import re
 
 from dataclasses import dataclass
-from collections.abc import Callable
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 
-from backend.sources.constants import SourceAccessStatus
-from backend.agents.researcher_findings import SourceGroup
-from backend.sources.access import ArticleCandidate, ArticleSearchResult
-from backend.application.evidence.outlet_assignments import outlets_for_group
+from backend.sources.access import ArticleCandidate
 
 MAX_EVENT_CANDIDATES: int = 12
 MINIMUM_OUTLETS: int = 2
 RECENT_TIME_PHRASE: str = r"(?:right now|now|today|this week|lately)"
+TOPIC_QUESTION: str = "How did different outlets cover “{topic}”?"
+TOPIC_SELECTION: re.Pattern[str] = re.compile(
+    re.escape(TOPIC_QUESTION).replace(re.escape("{topic}"), r".+"),
+)
 EVENT_TOPIC_PREFIX: re.Pattern[str] = re.compile(
     r"^(?:(?:any|current|latest|recent|the)\s+)*(?:events|headlines|news|updates)"
     r"\s+(?:about|around|from|in|on)\s+",
@@ -48,6 +48,7 @@ class EventCandidate:
     first_date: date
     last_date: date
     snippet: str | None = None
+    candidates: tuple[ArticleCandidate, ...] = ()
 
 
 def normalize_event_topic(topic: str | None) -> str:
@@ -57,37 +58,9 @@ def normalize_event_topic(topic: str | None) -> str:
     return EVENT_TOPIC_SUFFIX.sub("", query)
 
 
-def start_of_month_window(end: date) -> date:
-    """Find the same day of the previous month, clamped to its last day."""
-    month_start: date = end.replace(day=1)
-    if month_start == date.min:
-        return date.min
-    previous_month_end: date = month_start - timedelta(days=1)
-    return previous_month_end.replace(day=min(end.day, previous_month_end.day))
-
-
-def discover_events(
-    discover_headlines: Callable[[str, date, date, tuple[str, ...]], ArticleSearchResult],
-    topic: str,
-    start_date: date,
-    end_date: date,
-    limit: int = MAX_EVENT_CANDIDATES,
-    *,
-    require_shared_coverage: bool = True,
-) -> tuple[EventCandidate, ...]:
-    """Collect and rank dated headlines across the approved outlets."""
-    outlets: tuple[str, ...] = tuple(
-        outlet for group in SourceGroup for outlet in outlets_for_group(group)
-    )
-    result: ArticleSearchResult = discover_headlines(topic, start_date, end_date, outlets)
-    if not any(
-        outcome.status in (SourceAccessStatus.SUCCESS, SourceAccessStatus.NO_RESULTS)
-        for outcome in result.outcomes
-    ):
-        raise RuntimeError("No approved publisher could be searched.")
-    return cluster_events(
-        list(result.candidates), limit, require_shared_coverage=require_shared_coverage,
-    )
+def is_topic_selection(question: str) -> bool:
+    """Recognize the undated question generated for a story selection."""
+    return TOPIC_SELECTION.fullmatch(" ".join(question.split())) is not None
 
 
 def headline_terms(title: str) -> frozenset[str]:
@@ -156,6 +129,7 @@ def cluster_events(
             first_date=min(day for _, day in members),
             last_date=max(day for _, day in members),
             snippet=members[0][0].snippet,
+            candidates=tuple(member for member, _ in members),
         )
         for number, members in enumerate(clusters[:limit], start=1)
     )

@@ -11,6 +11,7 @@ and progress streaming are connected to this function separately."""
 import asyncio
 import logging
 
+from uuid import UUID
 from openai import APIError
 from datetime import date
 from dataclasses import dataclass
@@ -29,7 +30,8 @@ from backend.interfaces.http.chat_contracts import ChatMessage, ChatRole
 from backend.application.answer.answer_rendering import render_answer
 from backend.application.evidence.outlet_assignments import outlet_display_name
 from backend.application.turn.tool_calls import ToolCallOutcome, ToolCallRecord
-from backend.application.turn.topic_step import is_topic_selection, propose_topics
+from backend.application.turn.topic_step import IssueDiscovery, propose_topics
+from backend.application.evidence.recent_events import is_topic_selection
 from backend.application.evidence.collected_evidence import collect_articles_by_group
 from backend.application.turn.failure_category import FailureCategory, describe_failure
 from backend.application.turn.structured_run import BudgetExceeded, run_with_correction
@@ -141,19 +143,40 @@ async def run_turn(
     model: Model,
     model_settings: ModelSettings | None = None,
     today: date | None = None,
+    *,
+    issue_id: UUID | None = None,
 ) -> TurnResult:
     """Clarify the request or coordinate both research groups and the Writer."""
     current_date: date = today or date.today()
+    state.reader_question = messages[-1].content
     state.previous_answers = tuple(
         message.content for message in messages if message.role is ChatRole.ASSISTANT
     )
+    notice: str = ""
+    discovery_question: str = state.reader_question
     try:
-        if not state.reusing_research and not is_topic_selection(messages[-1].content):
-            topics: str = await asyncio.wait_for(
-                propose_topics(state, model, model_settings, messages[-1].content, current_date),
+        if issue_id is not None:
+            if state.reusing_research:
+                return TurnResult("Start a new chat to compare another issue.", ())
+            state.issue = state.store.load_issue(issue_id)
+            if state.issue is None:
+                return TurnResult("This issue has expired. Search for it again to refresh the feeds.", ())
+            if not state.issue.description:
+                discovery_question = state.issue.label
+                state.issue = None
+        if (
+            state.issue is None
+            and not state.reusing_research
+            and (issue_id is not None or not is_topic_selection(state.reader_question))
+        ):
+            discovery: IssueDiscovery = await asyncio.wait_for(
+                propose_topics(state, model, model_settings, discovery_question, current_date),
                 timeout=state.budget.remaining_seconds(),
             )
-            return TurnResult(topics, state.recorder.records)
+            if discovery.issue is None:
+                return TurnResult(discovery.answer, state.recorder.records)
+            state.issue = discovery.issue
+            notice = discovery.answer
         outcome: LeadOutcome | None = await run_lead_stage(
             state, model, model_settings, messages, current_date,
         )
@@ -183,4 +206,5 @@ async def run_turn(
         return TurnResult(outcome.brief.clarifying_question or "", state.recorder.records)
     if state.final_answer is None:
         return build_failure_result(state, FailureCategory.INVALID_OUTPUT)
-    return TurnResult(state.final_answer, state.recorder.records)
+    answer: str = f"{notice}\n\n{state.final_answer}" if notice else state.final_answer
+    return TurnResult(answer, state.recorder.records)

@@ -37,6 +37,7 @@ class SampleAssessment:
     reason: str
     sample_statement: str
     thin_groups: tuple[SourceGroup, ...]
+    show_footnote: bool = False
 
 
 def count_outlets(articles: tuple[ArticleRecord, ...]) -> int:
@@ -108,10 +109,12 @@ def assess_sample(
                 ),
                 statement,
                 (),
+                True,
             )
     thin: tuple[SourceGroup, ...] = tuple(
         group
         for group, articles in articles_by_group.items()
         if not meets_floor(articles)
     )
-    return SampleAssessment(AnswerMode.COMPARISON, "", statement, thin)
+    uneven: bool = len(liberal) != len(conservative) or count_outlets(liberal) != count_outlets(conservative)
+    return SampleAssessment(AnswerMode.COMPARISON, "", statement, thin, bool(thin) or uneven)

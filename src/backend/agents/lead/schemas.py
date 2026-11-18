@@ -31,6 +31,7 @@ class AspectTreatment(BaseModel):
     state: CoverageState
     note: str = ""
     passage_ids: list[str] = Field(default_factory=list)
+    incidental_passage_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_evidence_unless_absent(self) -> "AspectTreatment":
