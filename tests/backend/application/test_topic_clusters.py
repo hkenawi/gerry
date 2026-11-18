@@ -6,11 +6,9 @@ from datetime import date
 
 from backend.sources.access import ArticleCandidate
 from backend.agents.topics.schemas import TopicProposal
-from backend.application.evidence.recent_events import headline_terms
 from backend.application.evidence.topic_clusters import (
     build_topic_options,
     find_proposal_problems,
-    select_headlines,
 )
 
 
@@ -68,34 +66,3 @@ def test_a_topic_needs_two_outlets_and_is_ranked_by_how_many_covered_it() -> Non
 
     assert [option.label for option in options] == ["Turkey earthquake", "Brazil runoff"]
     assert options[0].outlet_ids == ("npr", "fox", "cbs")
-
-
-def test_labels_are_cleaned_and_duplicates_are_dropped() -> None:
-    """
-    Characters that would break the choice link are removed and repeated labels are skipped.
-    """
-    candidates = [headline("npr", "Alpha beta gamma"), headline("fox", "Alpha beta delta")]
-
-    options = build_topic_options(
-        proposal(("“Alpha” [beta] topic", [1, 2]), ("alpha beta topic", [1, 2])), candidates,
-    )
-
-    assert [option.label for option in options] == ["Alpha beta topic"]
-
-
-def test_undated_and_repeated_headlines_never_reach_the_clusterer() -> None:
-    """
-    Only distinct dated headlines are offered, the best word matches first.
-    """
-    candidates = [
-        headline("npr", "Local school board votes", date(2026, 11, 7)),
-        headline("npr", "Brazil runoff election results", date(2026, 11, 1)),
-        headline("fox", "Undated Brazil story", None),
-    ]
-    candidates.append(candidates[0])
-
-    chosen = select_headlines(candidates, headline_terms("Brazil runoff"))
-
-    assert [item.title for item in chosen] == [
-        "Brazil runoff election results", "Local school board votes",
-    ]

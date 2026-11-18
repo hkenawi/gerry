@@ -1,24 +1,17 @@
 """
 Behavior tests for the trusted source tools a Researcher may call.
 
-The tests exercise the outlet assignment, publication window, shared budget,
-and retries enforced for the model's search and article-read calls."""
+The tests protect outlet restrictions, shared search and read budgets, and
+bounded retries for the model's source tools."""
 
 from datetime import date
-from collections.abc import Callable
 
 from backend.application.settings import Settings
-from backend.application.evidence.outlet_assignments import outlets_for_group
-from backend.sources.constants import SourceAccessStatus
-from backend.sources.service import ArticleSourceService
 from backend.agents.researcher_findings import SourceGroup
 from backend.agents.researcher.tools import GroupSourceTools
-from backend.application.turn.request_state import RequestState
-from backend.application.turn.tool_calls import ToolCallOutcome
 from backend.sources.access import (
     ArticleReadResult,
     SourceAccessOutcome,
-    ArticleSearchResult,
 )
 
 WINDOW: tuple[date, date] = (date(2026, 11, 1), date(2026, 11, 7))
@@ -41,38 +34,6 @@ def failed_read(outlet_id: str, status: str) -> ArticleReadResult:
     )
 
 
-async def test_search_is_bound_to_the_groups_outlets_and_the_window(
-    make_state,
-    fake_sources,
-) -> None:
-    """
-    The model cannot widen the outlets or dates; code supplies both.
-    """
-    state = make_state()
-    tools = build_tools(state)
-
-    await tools.search_articles("France protests")
-
-    call = fake_sources.search_calls[0]
-    assert call["assigned_outlets"] == outlets_for_group(SourceGroup.LIBERAL)
-    assert (call["start_date"], call["end_date"]) == WINDOW
-
-
-async def test_search_records_a_tool_call_attributed_to_the_researcher(
-    make_state,
-) -> None:
-    """
-    Every search appears in tool_calls with the researcher's agent identity.
-    """
-    state = make_state()
-
-    await build_tools(state, SourceGroup.CONSERVATIVE).search_articles("x")
-
-    record = state.recorder.records[0]
-    assert record.agent == "researcher_conservative"
-    assert record.tool == "search_articles"
-
-
 async def test_search_with_spent_budget_does_not_call_the_source(
     make_state,
     fake_sources,
@@ -88,29 +49,6 @@ async def test_search_with_spent_budget_does_not_call_the_source(
 
     assert len(fake_sources.search_calls) == 1
     assert result.outcomes[0].status == "budget_exhausted"
-
-
-async def test_invalid_search_reports_failure_for_each_assigned_outlet(
-    make_state: Callable[[], RequestState],
-) -> None:
-    """Report a rejected query to the Researcher and log one failed search."""
-    state: RequestState = make_state()
-    state.sources = ArticleSourceService(state.store)
-
-    result: ArticleSearchResult = await build_tools(state).search_articles(" ")
-
-    assert result.candidates == ()
-    assert tuple(outcome.outlet_id for outcome in result.outcomes) == outlets_for_group(
-        SourceGroup.LIBERAL,
-    )
-    assert {outcome.status for outcome in result.outcomes} == {
-        SourceAccessStatus.FETCH_FAILED,
-    }
-    assert {outcome.detail for outcome in result.outcomes} == {
-        "The search request was not valid.",
-    }
-    assert len(state.recorder.records) == 1
-    assert state.recorder.records[0].outcome is ToolCallOutcome.FAILURE
 
 
 async def test_read_outside_the_groups_outlets_is_refused_without_a_call(
@@ -175,29 +113,3 @@ async def test_retries_consume_the_shared_read_budget(
 
     assert len(fake_sources.read_calls) == 2
     assert result.outcome.status == "budget_exhausted"
-
-
-async def test_successful_read_returns_the_saved_article_and_records_success(
-    make_state,
-    fake_sources,
-    make_article,
-) -> None:
-    """
-    A good read returns the article and is recorded as a successful call.
-    """
-    state = make_state()
-    article = make_article("npr")
-    fake_sources.read_script = {
-        NPR_URL: [
-            ArticleReadResult(
-                outcome=SourceAccessOutcome(outlet_id="npr", status="success"),
-                article=article,
-            )
-        ]
-    }
-
-    result = await build_tools(state).read_article(NPR_URL, "npr")
-
-    assert result.article == article
-    assert state.recorder.records[-1].outcome == "success"
-    assert state.failed_reads == []

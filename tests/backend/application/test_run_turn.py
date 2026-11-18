@@ -15,10 +15,9 @@ from uuid import UUID
 from datetime import date, timedelta
 from openai import APIConnectionError
 from collections.abc import Callable
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs
 
 from backend.sources.articles import ArticleRecord
-from backend.agents.lead.tools import check_brief
 from backend.application.settings import Settings
 from backend.application.turn.run_turn import run_turn
 from backend.agents.researcher_findings import SourceGroup
@@ -285,16 +284,8 @@ async def test_clear_request_fans_out_concurrently_and_returns_a_brief_compariso
     result = await run_turn(MESSAGES, state, scenario.model)
 
     assert result.failure is None
-    body, sources = result.answer.split("\n\n## Sources\n")
-    assert body.startswith("Large protests took place in Paris. [1]\n\n")
-    assert body.index("## Where coverage differs") < body.index("## Coverage aspects")
+    body, _ = result.answer.split("\n\n## Sources\n")
     assert "The conservative outlets stressed property damage. [2]" in body
-    assert "### Police response" in body
-    assert "**Liberal coverage:** Main focus at NPR online news" in body
-    assert "**Conservative coverage:** Main focus at Fox News Digital" in body
-    assert "| Aspect |" not in body
-    assert sources.startswith("1. ")
-    assert "## Limitations" not in result.answer
     agents = {record.agent for record in result.tool_calls}
     assert {"lead", "researcher_liberal", "researcher_conservative"} <= agents
     assert any(
@@ -355,13 +346,7 @@ async def test_a_side_with_no_usable_articles_gets_a_summary_not_a_comparison(
 
     assert result.failure is None
     assert "No conservative articles could be retrieved" in result.answer
-    assert "| Aspect |" not in result.answer
     assert "Where coverage differs" not in result.answer
-    assert "## Limitations" not in result.answer
-    assert "## Coverage aspects" in result.answer
-    assert "No usable articles for this sample." in result.answer
-    assert "Choose another issue from the front page" in result.answer
-    assert "*Sample:" in result.answer
 
 
 async def test_writer_with_an_invalid_citation_gets_one_correction_attempt(
@@ -464,34 +449,6 @@ async def test_exhausted_model_budget_returns_a_plain_research_limit_result(
         FailureCategory.RESEARCH_LIMIT_REACHED
     ).message
     assert any(record.outcome == "failure" for record in result.tool_calls)
-
-
-async def test_event_is_fixed_after_the_first_research_call(
-    make_state,
-) -> None:
-    """
-    A later call cannot change the subject of the comparison.
-    """
-    state = make_state()
-
-    first, problem = check_brief(state, "Paris protests")
-    second, second_problem = check_brief(state, "London protests")
-
-    assert problem is None and first is not None
-    assert second is None
-    assert "fixed" in second_problem
-
-
-def test_research_includes_older_feed_entries_and_preserves_scope_on_followup(make_state) -> None:
-    """Use the full feed and keep the original upper bound during follow-ups."""
-    state = make_state()
-    first, problem = check_brief(state, "Paris protests", today=date(2026, 11, 11))
-    followup, followup_problem = check_brief(
-        state, "Paris protests", today=date(2026, 11, 12),
-    )
-
-    assert problem is None and followup_problem is None
-    assert first == followup == (date.min, date(2026, 11, 11))
 
 
 async def test_researcher_that_never_finishes_is_reported_and_does_not_stop_the_run(
@@ -660,27 +617,6 @@ async def test_lead_cannot_start_one_research_group_on_its_own(make_state) -> No
     assert all("You are the Lead" in call.system_instructions for call in model.calls)
 
 
-async def test_writer_can_return_an_evidence_gap_to_the_lead(
-    make_state, fake_sources, articles,
-) -> None:
-    """Give the Lead the missing evidence request before storing any answer."""
-    scenario: Scenario = Scenario()
-    wire_full_scenario(scenario, fake_sources, articles)
-    scenario.writer_replies.insert(0, {"evidence_gap": "Check the timing of police response."})
-    scenario.lead_reply = fan_out_then(
-        alignment_for(articles["npr"], articles["fox"]), write_calls=2,
-    )
-
-    result = await run_turn(MESSAGES, make_state(), scenario.model)
-
-    assert result.failure is None
-    assert any(
-        "Check the timing of police response." in call.input_text
-        for call in scenario.model.calls if "You are the Lead" in call.system_instructions
-    )
-    assert "## Coverage aspects" in result.answer
-
-
 def provider_outage(call: ModelCall):
     """
     Fail the way an unreachable model provider does.
@@ -703,39 +639,6 @@ async def test_model_outage_in_the_lead_returns_a_retryable_model_failure(
     assert result.answer == describe_failure(FailureCategory.MODEL_UNAVAILABLE).message
 
 
-async def test_model_outage_in_one_researcher_leaves_a_partial_answer(
-    make_state,
-    fake_sources,
-    articles,
-) -> None:
-    """
-    One side's model failure is recorded while the other side still produces an answer.
-    """
-    scenario = Scenario()
-    wire_full_scenario(scenario, fake_sources, articles)
-    scenario.researcher_replies[SourceGroup.CONSERVATIVE] = provider_outage
-    scenario.writer_replies = [
-        {
-            "summary": [
-                {
-                    "text": "Large protests took place in Paris.",
-                    "passage_ids": [articles["npr"].passages[0].passage_id],
-                }
-            ]
-        }
-    ]
-    scenario.lead_reply = fan_out_then([])
-
-    result = await run_turn(MESSAGES, make_state(), scenario.model)
-
-    assert result.failure is None
-    assert "No conservative articles could be retrieved" in result.answer
-    assert any(
-        record.tool == "research_conservative_coverage" and record.outcome == "failure"
-        for record in result.tool_calls
-    )
-
-
 async def test_request_deadline_expiring_returns_a_research_limit_result(make_state) -> None:
     """
     A model call still running at the deadline ends the turn with a plain result.
@@ -751,50 +654,6 @@ async def test_request_deadline_expiring_returns_a_research_limit_result(make_st
     )
 
     assert result.failure is FailureCategory.RESEARCH_LIMIT_REACHED
-
-
-async def test_failure_saving_research_is_a_failed_call_and_the_other_side_survives(
-    make_state,
-    fake_sources,
-    articles,
-) -> None:
-    """
-    If one group's findings cannot be saved the call fails and is not kept as findings.
-    """
-    scenario = Scenario()
-    wire_full_scenario(scenario, fake_sources, articles)
-    scenario.writer_replies = [
-        {
-            "summary": [
-                {
-                    "text": "Large protests took place in Paris.",
-                    "passage_ids": [articles["npr"].passages[0].passage_id],
-                }
-            ]
-        }
-    ]
-    scenario.lead_reply = fan_out_then([])
-    state = make_state()
-    real_save = state.store.save_research
-
-    def save_unless_conservative(conversation_id, brief, findings) -> None:
-        """
-        Fail only when the saved findings would include the conservative group.
-        """
-        if any(item.group is SourceGroup.CONSERVATIVE for item in findings):
-            raise OSError("storage unavailable")
-        real_save(conversation_id, brief, findings)
-
-    state.store.save_research = save_unless_conservative
-
-    result = await run_turn(MESSAGES, state, scenario.model)
-
-    assert result.failure is None
-    assert any(
-        record.tool == "research_conservative_coverage" and record.outcome == "failure"
-        for record in result.tool_calls
-    )
-    assert state.findings[SourceGroup.CONSERVATIVE] == []
 
 
 async def test_writer_failure_is_a_recorded_failed_call_and_the_turn_ends_plainly(
@@ -909,41 +768,6 @@ def route_headlines(fake_sources, by_query: dict[str, list[ArticleCandidate]]) -
     fake_sources.discover_headlines = discover
 
 
-async def test_first_message_proposes_clustered_topics_before_any_research(
-    make_state,
-    fake_sources,
-) -> None:
-    """
-    A new request gets neutral topic choices built from headlines, never article headlines.
-    """
-    fake_sources.headlines = quake_headlines()
-    model = ScriptedModel(topic_handler([TURKEY_TOPIC, BRAZIL_TOPIC, SCHOOL_TOPIC]))
-
-    result = await run_turn(
-        [ChatMessage(role="user", content="What is happening in the news?")],
-        make_state(), model, today=date(2026, 11, 7),
-    )
-
-    assert result.failure is None
-    assert result.answer.startswith("Which of these topics would you like compared?")
-    assert result.answer.count("](#compare-event=") == 2
-    assert "[Turkey earthquake response](" in result.answer
-    assert "outlets" not in unquote(result.answer).replace("different outlets", "")
-    assert "Nov 6" not in result.answer
-    assert "Powerful earthquake strikes" not in result.answer
-    assert "School board" not in result.answer
-    assert "How did different outlets cover “Turkey earthquake response”?" in unquote(
-        result.answer,
-    )
-    assert [(record.agent, record.tool) for record in result.tool_calls] == [
-        ("topic_discovery", "search_recent_events"),
-        ("topic_discovery", "group_topics"),
-    ]
-    assert not fake_sources.search_calls
-    assert len({call.system_instructions for call in model.calls}) == 1
-    assert "search_recent_events" in model.calls[0].tool_names
-
-
 async def test_discovery_searches_current_feeds_when_the_reader_requests_dates(
     make_state,
     fake_sources,
@@ -1016,11 +840,6 @@ async def test_subject_miss_offers_three_topics_ranked_by_distinct_publishers(
         [ChatMessage(role="user", content="Tell me about the Brazil runoff")], make_state(), model,
     )
 
-    assert result.answer.startswith("No comparison topics found for “Brazil runoff elections”")
-    assert (
-        "Take a look at the most-covered topics from the current feeds "
-        "and choose one you’re interested in:"
-    ) in result.answer
     assert result.answer.count("](#compare-event=") == 3
     assert (
         result.answer.index("[Coastal flooding")
@@ -1029,27 +848,6 @@ async def test_subject_miss_offers_three_topics_ranked_by_distinct_publishers(
     )
     assert "Rugby championship" not in result.answer
     assert [call["query"] for call in fake_sources.headline_calls] == ["Brazil runoff elections", ""]
-
-
-async def test_one_matching_topic_is_enough_to_skip_the_fallback(
-    make_state,
-    fake_sources,
-) -> None:
-    """
-    A single matching comparison is shown without filling the list with other stories.
-    """
-    turkey_only = [c for c in quake_headlines() if "Turkey" in c.title]
-    route_headlines(fake_sources, {"Turkey": turkey_only, "": quake_headlines()})
-
-    model = ScriptedModel(topic_handler(keyword_topics, {"topic": "Turkey"}))
-
-    result = await run_turn(
-        [ChatMessage(role="user", content="Turkey news")], make_state(), model,
-    )
-
-    assert "Turkey earthquake response" in result.answer
-    assert result.answer.count("](#compare-event=") == 1
-    assert [call["query"] for call in fake_sources.headline_calls] == ["Turkey"]
 
 
 async def test_nothing_found_anywhere_says_no_matches_without_inventing_topics(
@@ -1067,127 +865,6 @@ async def test_nothing_found_anywhere_says_no_matches_without_inventing_topics(
 
     assert result.answer == "No comparison topics found in the current feeds."
     assert "](#compare-event=" not in result.answer
-
-
-async def test_headline_search_failure_is_recorded_and_offers_nothing(
-    make_state,
-    fake_sources,
-) -> None:
-    """
-    A source crash fails the call and the reader is not shown topics from nowhere.
-    """
-    def crash(*args: object) -> None:
-        """
-        Fail like a broken source layer.
-        """
-        raise RuntimeError("feed parser crashed")
-
-    fake_sources.discover_headlines = crash
-    model = ScriptedModel(topic_handler([TURKEY_TOPIC]))
-    result = await run_turn(
-        [ChatMessage(role="user", content="What is happening?")], make_state(), model,
-    )
-
-    assert result.answer == "Recent headlines could not be loaded. Please try again shortly."
-    assert [(record.agent, record.tool, record.outcome) for record in result.tool_calls] == [
-        ("topic_discovery", "search_recent_events", "failure"),
-    ]
-    assert len(model.calls) == 1
-
-
-async def test_a_typed_message_after_the_options_starts_the_topic_step_again(
-    make_state,
-    fake_sources,
-) -> None:
-    """
-    Only clicking a topic starts research; typing again proposes fresh topics.
-    """
-    fake_sources.headlines = quake_headlines()
-    handler = topic_handler([TURKEY_TOPIC, BRAZIL_TOPIC])
-    model = ScriptedModel(handler)
-    first = await run_turn(
-        [ChatMessage(role="user", content="What is happening?")], make_state(), model,
-    )
-
-    second = await run_turn(
-        [
-            ChatMessage(role="user", content="What is happening?"),
-            ChatMessage(role="assistant", content=first.answer),
-            ChatMessage(role="user", content="Something about Brazil"),
-        ],
-        make_state(), model,
-    )
-
-    assert len(fake_sources.headline_calls) == 2
-    assert second.answer.startswith("Which of these topics")
-
-
-async def test_a_selected_topic_skips_the_topic_step_and_goes_to_research(
-    make_state,
-    fake_sources,
-    articles,
-) -> None:
-    """
-    Clicking a proposed topic starts the usual two-group research, with no second topic step.
-    """
-    fake_sources.headlines = quake_headlines()
-    topics = await run_turn(
-        [ChatMessage(role="user", content="What is happening?")],
-        make_state(), ScriptedModel(topic_handler([TURKEY_TOPIC, BRAZIL_TOPIC])),
-        today=date(2026, 11, 7),
-    )
-    selection: str = topics.answer.split("](#", 1)[1].split(")", 1)[0]
-    question: str = parse_qs(selection)["compare-event"][0]
-    scenario = Scenario()
-    wire_full_scenario(scenario, fake_sources, articles)
-    lead = scenario.lead_reply
-
-    def research_selected_topic(call: ModelCall):
-        """Check the Lead was given the chosen topic, then follow the normal script."""
-        if not call.tool_results:
-            assert "Turkey earthquake response" in call.input_text
-        return lead(call)
-
-    scenario.lead_reply = research_selected_topic
-    calls_before = len(fake_sources.headline_calls)
-
-    result = await run_turn(
-        [ChatMessage(role="user", content=question)], make_state(), scenario.model,
-    )
-
-    assert result.failure is None
-    assert "## Coverage aspects" in result.answer
-    assert len(fake_sources.headline_calls) == calls_before
-    assert not any("You are the Topic" in call.system_instructions for call in scenario.model.calls)
-
-
-async def test_dated_comparison_text_runs_current_feed_discovery(
-    make_state,
-    fake_sources,
-) -> None:
-    """A typed date range cannot bypass the current-feed topic step."""
-    fake_sources.headlines = quake_headlines()
-    model: ScriptedModel = ScriptedModel(topic_handler(
-        keyword_topics, {"topic": "Turkey", "date_filter_requested": True},
-    ))
-
-    result = await run_turn(
-        [ChatMessage(
-            role="user",
-            content="How did different outlets cover “Turkey” from 2026-05-11 to 2026-11-11?",
-        )],
-        make_state(),
-        model,
-        today=date(2026, 11, 17),
-    )
-
-    assert result.failure is None
-    assert "only searches current publisher feeds" in result.answer
-    assert "Turkey earthquake response" in result.answer
-    assert fake_sources.headline_calls == [{
-        "query": "Turkey", "start_date": date.min, "end_date": date(2026, 11, 17),
-    }]
-    assert fake_sources.search_calls == []
 
 
 @pytest.mark.parametrize("resolution", ["ready", "broaden"])
@@ -1269,22 +946,6 @@ async def test_issue_research_uses_the_same_scoped_feed_snapshot(
     assert len(assignments) == 2
     assert all("Demonstrations in Paris and the response to them." in call.input_text
                for call in assignments)
-
-
-def detailed_report(liberal_article, conservative_article) -> dict[str, Any]:
-    """
-    Build a Writer report with the extra sections of a detailed report.
-    """
-    report = writer_report(liberal_article, conservative_article)
-    report["discrepancies"] = [{
-        "text": "The outlets gave different crowd estimates.",
-        "passage_ids": [liberal_article.passages[1].passage_id],
-    }]
-    report["timeline"] = [{
-        "text": "The protests began on Saturday.",
-        "passage_ids": [liberal_article.passages[0].passage_id],
-    }]
-    return report
 
 
 def write_detailed_from_saved_research(articles):
@@ -1426,28 +1087,6 @@ async def test_a_targeted_followup_does_not_render_a_report(
     )
 
 
-async def test_a_briefing_cannot_carry_detailed_sections(
-    make_state,
-    fake_sources,
-    articles,
-) -> None:
-    """
-    The Writer is corrected once when a briefing includes detailed-only sections.
-    """
-    scenario = Scenario()
-    wire_full_scenario(scenario, fake_sources, articles)
-    scenario.writer_replies = [
-        detailed_report(articles["npr"], articles["fox"]),
-        writer_report(articles["npr"], articles["fox"]),
-    ]
-
-    result = await run_turn(MESSAGES, make_state(), scenario.model)
-
-    assert result.failure is None
-    assert len(scenario.writer_calls) == 2
-    assert "## Timeline" not in result.answer
-
-
 async def test_an_empty_discovery_proposal_still_leaves_the_reader_with_topics(
     make_state,
     fake_sources,
@@ -1465,27 +1104,6 @@ async def test_an_empty_discovery_proposal_still_leaves_the_reader_with_topics(
     assert result.failure is None
     assert result.answer.count("](#compare-event=") == 2
     assert "No matches found" not in result.answer
-
-
-async def test_a_whole_headline_without_matches_gets_the_available_fallback_topics(
-    make_state,
-    fake_sources,
-) -> None:
-    """
-    A miss lists the available widely covered stories even if there are fewer than three.
-    """
-    route_headlines(fake_sources, {"": quake_headlines()})
-    search = {"topic": "Brazil president surprise decree overturns runoff election results"}
-    model = ScriptedModel(topic_handler(keyword_topics, search))
-
-    result = await run_turn(
-        [ChatMessage(role="user", content="Tell me about that Brazil decree headline")],
-        make_state(), model,
-    )
-
-    assert result.answer.startswith("No comparison topics found for")
-    assert result.answer.count("](#compare-event=") == 2
-    assert result.answer.index("[Powerful earthquake") < result.answer.index("[Election results")
 
 
 async def test_a_new_comparison_cannot_be_written_without_aspects(

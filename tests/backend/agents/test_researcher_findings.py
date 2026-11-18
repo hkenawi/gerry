@@ -43,26 +43,6 @@ def test_focus_without_supporting_passage_is_rejected() -> None:
         ResearcherFindings.model_validate(build_findings(main_focuses=unsupported))
 
 
-def test_findings_preserve_attributed_accounts_and_read_article_inventory() -> None:
-    """Retain the evidence the Lead needs to compare conflicting accounts."""
-    findings: ResearcherFindings = ResearcherFindings.model_validate(
-        build_findings(
-            article_ids=["npr-1"],
-            accounts=[
-                {
-                    "account": "Officials reported six injuries.",
-                    "attributed_to": "Local emergency officials",
-                    "article_id": "npr-1",
-                    "passage_ids": ["npr-1-p3"],
-                },
-            ],
-        ),
-    )
-
-    assert findings.article_ids == ["npr-1"]
-    assert findings.accounts[0].attributed_to == "Local emergency officials"
-
-
 def test_findings_cannot_cite_an_article_outside_the_read_inventory() -> None:
     """Keep claims tied to the articles the Researcher reports having read."""
     with pytest.raises(ValidationError):

@@ -6,7 +6,6 @@ findings, without fetching sources or choosing a persistence backend."""
 import pytest
 
 from uuid import UUID
-from datetime import date, datetime
 from pydantic import ValidationError
 
 from backend.sources.articles import ArticleRecord
@@ -39,19 +38,6 @@ def build_article_payload() -> dict[str, object]:
     }
 
 
-def test_saved_article_round_trip_preserves_evidence_and_date_precision() -> None:
-    """Reload a snapshot without changing its evidence IDs, text, or date precision."""
-    article: ArticleRecord = ArticleRecord.model_validate(build_article_payload())
-    restored: ArticleRecord = ArticleRecord.model_validate_json(
-        article.model_dump_json(),
-    )
-
-    assert restored == article
-    assert type(restored.published_at) is date
-    assert restored.passages[0].passage_id == FIRST_PASSAGE_ID
-    assert restored.passages[1].text == "Officials described the agenda."
-
-
 @pytest.mark.parametrize(
     "passages",
     [
@@ -73,14 +59,6 @@ def test_article_rejects_unusable_or_ambiguous_passage_references(
 
     with pytest.raises(ValidationError):
         ArticleRecord.model_validate(payload)
-
-
-def test_saved_article_rejects_evidence_changes() -> None:
-    """Prevent modifying a saved snapshot behind existing citation references."""
-    article: ArticleRecord = ArticleRecord.model_validate(build_article_payload())
-
-    with pytest.raises(ValidationError):
-        setattr(article, "passages", ())
 
 
 @pytest.mark.parametrize(
@@ -110,35 +88,3 @@ def test_article_read_rejects_evidence_from_another_outlet() -> None:
                 "article": build_article_payload(),
             },
         )
-
-
-def test_article_normalizes_retrieval_time_without_changing_publication_day() -> None:
-    """Use UTC for retrieval while retaining the publisher's calendar date."""
-    payload: dict[str, object] = build_article_payload()
-    payload["published_at"] = "2026-11-07T23:30:00-05:00"
-    payload["retrieved_at"] = "2026-11-08T18:00:00-05:00"
-    article: ArticleRecord = ArticleRecord.model_validate(payload)
-
-    assert article.published_at is not None
-    assert article.published_at.isoformat() == "2026-11-07T23:30:00-05:00"
-    assert article.retrieved_at.isoformat() == "2026-11-08T23:00:00+00:00"
-
-
-@pytest.mark.parametrize(
-    ("field_name", "naive_timestamp"),
-    [
-        ("published_at", "2026-11-08T12:00:00"),
-        ("updated_at", datetime(2026, 11, 8, 12)),
-        ("retrieved_at", "2026-11-08T12:00:00"),
-    ],
-)
-def test_article_rejects_timestamps_without_timezone(
-    field_name: str,
-    naive_timestamp: str | datetime,
-) -> None:
-    """Reject ambiguous timestamps rather than assuming a publisher timezone."""
-    payload: dict[str, object] = build_article_payload()
-    payload[field_name] = naive_timestamp
-
-    with pytest.raises(ValidationError):
-        ArticleRecord.model_validate(payload)

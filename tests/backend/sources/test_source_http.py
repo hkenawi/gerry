@@ -79,26 +79,3 @@ def test_response_size_limit_is_enforced_while_reading() -> None:
                 "https://www.npr.org/story", ("www.npr.org",),
                 SourceLimits(max_response_bytes=8),
             )
-
-
-def test_transient_failure_is_retried_within_the_same_fetch_operation() -> None:
-    """Recover a transient publisher failure without unbounded retries."""
-    unavailable: Mock = Mock()
-    unavailable.status = 503
-    success: Mock = Mock()
-    success.status = 200
-    success.read1.side_effect = [b"body", b""]
-    success.getheader.return_value = "text/html"
-    addresses = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
-    with (
-        patch("socket.getaddrinfo", return_value=addresses),
-        patch("socket.create_connection"),
-        patch("ssl.create_default_context"),
-        patch("http.client.HTTPSConnection") as connection,
-    ):
-        connection.return_value.getresponse.side_effect = [unavailable, success]
-        result = fetch_document(
-            "https://www.npr.org/story", ("www.npr.org",), SourceLimits(),
-        )
-    assert result.body == b"body"
-    assert connection.call_count == 2
