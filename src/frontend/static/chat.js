@@ -152,7 +152,19 @@ function formatAspectCards(article) {
       const card = document.createElement("section");
       card.className = "coverage-aspect";
       const following = conservative.nextElementSibling;
+      // Column headers carry the side label, so drop the inline "… coverage:" label.
+      liberal.querySelector("strong")?.remove();
+      conservative.querySelector("strong")?.remove();
+      liberal.classList.add("aspect-liberal");
+      conservative.classList.add("aspect-conservative");
       card.append(next, liberal, conservative);
+      if (!group.querySelector(".aspect-columns")) {
+        const columns = document.createElement("div");
+        columns.className = "aspect-columns";
+        columns.setAttribute("aria-hidden", "true");
+        columns.innerHTML = "<span>Liberal</span><span>Conservative</span>";
+        group.append(columns);
+      }
       group.append(card);
       next = following;
     }

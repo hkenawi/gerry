@@ -366,14 +366,84 @@ summary:focus-visible {
 
 .coverage-aspects > h2 { margin: 16px 0 4px; }
 
+.aspect-columns,
 .coverage-aspect {
-  padding: 15px 0;
-  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
 }
 
-.coverage-aspect h3 { margin: 0 0 8px; }
-.coverage-aspect p { margin: 4px 0; }
-.coverage-aspect strong { color: var(--accent); }
+/* Newspaper look: ruled mastheads, serif headlines, justified columns. */
+.aspect-columns {
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--ink);
+  font: 700 12px/1 var(--serif);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+}
+
+.aspect-columns span { padding: 14px 28px; text-align: center; }
+.aspect-columns span + span,
+.aspect-conservative { border-left: 1px solid var(--ink); }
+
+.coverage-aspect {
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 22px;
+  margin-bottom: 28px;
+}
+
+.coverage-aspect h3 {
+  grid-column: 1 / -1;
+  margin: 0 0 20px;
+  padding: 16px 20px 14px;
+  text-align: center;
+  font: 900 clamp(22px, 3.2vw, 32px)/1.1 var(--serif);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-top: 3px double var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.coverage-aspect p {
+  margin: 0;
+  padding: 0 28px;
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.7;
+  text-align: left;
+}
+
+.aspect-liberal::first-letter,
+.aspect-conservative::first-letter {
+  float: left;
+  font: 700 1.5em/1 var(--serif);
+  padding: 0 3px 0 0;
+}
+
+@media (max-width: 640px) {
+  .aspect-columns,
+  .coverage-aspect { grid-template-columns: 1fr; }
+  .aspect-columns { display: none; }
+  .aspect-conservative { border-left: 0; border-top: 1px solid var(--ink); margin-top: 12px; padding-top: 12px; }
+  .aspect-liberal::first-letter,
+  .aspect-conservative::first-letter { float: none; font: inherit; padding: 0; }
+  .aspect-liberal::before,
+  .aspect-conservative::before {
+    display: block;
+    font-weight: 700;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .aspect-liberal::before { content: "Liberal"; }
+  .aspect-conservative::before { content: "Conservative"; }
+}
 .more-aspects > summary { padding: 12px 0; cursor: pointer; font-weight: 600; }
 
 .research-sources,

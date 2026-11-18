@@ -1,65 +1,26 @@
-"""Discover candidate URLs from bounded feeds and supported publisher archives.
+"""Discover candidate URLs from each outlet's current RSS or Atom feeds.
 
-RSS does not establish complete historical coverage. Archive support is explicit
-for NBC, CBS, and New York Post; other outlets retain a qualified feed-only result.
-Every candidate still requires an independent full article read and date check."""
+Feeds list only recent articles, so discovery is intended for recent news and does
+not establish complete coverage. Every candidate still requires an independent
+full article read and date check."""
 
 import re
 import xml.etree.ElementTree as ET
 
 from urllib.parse import urljoin, urlsplit
-from lxml.html import HTMLParser, fromstring
 from email.utils import parsedate_to_datetime
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime
 
 from backend.sources.access import ArticleCandidate
 from backend.sources.constants import SOURCE_CONSTANTS
 from backend.sources.outlets import OutletConfiguration
 from backend.sources.access.http import (
-    SourceLimits,
     FetchedDocument,
     SourceAccessError,
     validate_source_url,
 )
 
-
-def build_discovery_urls(
-    outlet: OutletConfiguration,
-    start_date: date,
-    end_date: date,
-    limits: SourceLimits,
-) -> tuple[tuple[str, ...], str]:
-    """Select current feeds for feed lookups or bounded archives for dated searches."""
-    if (
-        start_date == SOURCE_CONSTANTS.feed_start_date
-        or end_date >= datetime.now(UTC).date() - timedelta(days=7)
-    ):
-        return outlet.feed_urls, "Searched current feed entries; completeness is unknown."
-    urls: list[str] = []
-    cursor: date = start_date
-    while cursor <= end_date and len(urls) < limits.max_archive_pages:
-        if outlet.outlet_id == SOURCE_CONSTANTS.outlet_ids.NEW_YORK_POST.value:
-            urls.append(f"https://nypost.com/{cursor:%Y/%m/%d}/")
-            cursor += timedelta(days=1)
-        elif outlet.outlet_id in (
-            SOURCE_CONSTANTS.outlet_ids.NBC.value, SOURCE_CONSTANTS.outlet_ids.CBS.value,
-        ):
-            if outlet.outlet_id == SOURCE_CONSTANTS.outlet_ids.NBC.value:
-                urls.append(
-                    f"https://www.nbcnews.com/archive/articles/{cursor.year}/"
-                    f"{cursor.strftime('%B').lower()}",
-                )
-            else:
-                prefix: str = f"https://www.cbsnews.com/xml-sitemap/article-{cursor:%Y-%m}"
-                urls.extend((f"{prefix}.xml", f"{prefix}-2.xml"))
-            cursor = date(cursor.year + cursor.month // 12, cursor.month % 12 + 1, 1)
-        else:
-            return outlet.feed_urls, (
-                "Searched current feed only; historical archive discovery is unavailable."
-            )
-    return tuple(urls[:limits.max_archive_pages]), (
-        "Searched bounded publisher archive pages; historical completeness is unknown."
-    )
+FEED_SCOPE: str = "Searched current feed entries; completeness is unknown."
 
 
 def _matches_query(title: str, snippet: str, query: str) -> bool:
@@ -89,10 +50,8 @@ def parse_discovery_document(
     query: str,
     start_date: date,
     end_date: date,
-    *,
-    expect_feed: bool = False,
 ) -> tuple[ArticleCandidate, ...]:
-    """Parse feed/sitemap entries or archive links into restricted URL candidates."""
+    """Parse feed entries into restricted URL candidates."""
     candidates: list[ArticleCandidate] = []
     raw_entries: list[tuple[str, str, str, str | None]] = []
     has_declaration: bool = (
@@ -111,35 +70,23 @@ def parse_discovery_document(
         except ET.ParseError:
             root = None
     kind: str = root.tag.rsplit("}", 1)[-1] if root is not None else ""
-    if expect_feed and kind not in ("rss", "feed"):
+    if root is None or kind not in ("rss", "feed"):
         raise SourceAccessError(
             SOURCE_CONSTANTS.access_statuses.EXTRACTION_FAILED,
             "Publisher did not return an RSS or Atom feed.",
         )
-    if root is not None and kind in ("rss", "feed"):
-        entries: list[ET.Element] = root.findall(".//item") + root.findall("{*}entry")
-        for entry in entries:
-            title: str = entry.findtext("title") or entry.findtext("{*}title") or ""
-            link: str = entry.findtext("link") or ""
-            if not link:
-                for atom_link in entry.findall("{*}link"):
-                    if atom_link.get("rel", "alternate") == "alternate":
-                        link = atom_link.get("href", "")
-                        break
-            snippet: str = entry.findtext("description") or entry.findtext("{*}summary") or ""
-            published: str | None = entry.findtext("pubDate") or entry.findtext("{*}published")
-            raw_entries.append((link, title, snippet, published))
-    elif root is not None and root.tag.rsplit("}", 1)[-1] == "urlset":
-        raw_entries.extend(
-            (element.text or "", "", "", None)
-            for element in root.findall("{*}url/{*}loc")
-        )
-    else:
-        tree = fromstring(document.body, parser=HTMLParser(no_network=True))
-        for anchor in tree.xpath("//a[@href]"):
-            raw_entries.append((
-                anchor.get("href", ""), " ".join(anchor.itertext()).strip(), "", None,
-            ))
+    entries: list[ET.Element] = root.findall(".//item") + root.findall("{*}entry")
+    for entry in entries:
+        title: str = entry.findtext("title") or entry.findtext("{*}title") or ""
+        link: str = entry.findtext("link") or ""
+        if not link:
+            for atom_link in entry.findall("{*}link"):
+                if atom_link.get("rel", "alternate") == "alternate":
+                    link = atom_link.get("href", "")
+                    break
+        snippet: str = entry.findtext("description") or entry.findtext("{*}summary") or ""
+        published: str | None = entry.findtext("pubDate") or entry.findtext("{*}published")
+        raw_entries.append((link, title, snippet, published))
     seen: set[str] = set()
     for link, title, snippet, raw_date in raw_entries:
         if not link:

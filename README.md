@@ -28,7 +28,7 @@ gerry/
 │   │   ├── application/     # Chat workflow, evidence validation, and answer rendering
 │   │   ├── infrastructure/  # In-memory conversation and research storage
 │   │   ├── interfaces/http/ # FastAPI routes and request/response schemas
-│   │   └── sources/         # Outlet roster, feed and archive search, article extraction
+│   │   └── sources/         # Outlet roster, feed search, article extraction
 │   └── frontend/           # Browser chat, story picker, and citation viewer
 ├── tests/                   # Agent, source, and HTTP tests
 ├── .env.example             # Runtime settings reference

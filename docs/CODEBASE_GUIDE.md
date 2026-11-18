@@ -375,12 +375,12 @@ derive group membership from this roster. The service restricts article reads
 to the outlet's exact article hosts. Discovery can also use the feed hosts
 needed for the assigned outlet.
 
-Discovery uses current feeds when the end date is at least as recent as seven
-days before the current UTC date. For older windows, it can use NBC's monthly
-archive, CBS's monthly article sitemaps, and the New York Post's daily archive.
-Other outlets fall back to current feeds with a qualifier about historical
-coverage. Discovery parses RSS or Atom entries, sitemap URLs, or archive links.
-It filters video paths, matches terms against titles or snippets, checks known
+Discovery reads every current RSS or Atom feed configured for an outlet; an
+outlet may have several (for example a politics feed beside a general feed).
+There is no archive or historical discovery: the product is meant for recent
+news, and feeds list only recent articles. A response that is not RSS or Atom
+is reported as an extraction failure. Discovery
+filters video paths, matches terms against titles or snippets, checks known
 publication dates, and keeps a bounded set of candidate URLs per outlet.
 Candidates may have an unknown date. The read path must verify a date before
 collecting the article. [Outlet roster](../src/backend/sources/outlets/roster.py) ·
@@ -512,6 +512,6 @@ establish current availability at individual publishers.
 [Source tests](../tests/backend/sources/test_source_service.py)
 
 The current workflow centers on a specified event with bounded publication
-dates and follow-up questions about that event. Historical discovery is bounded
-and publisher-specific. The implementation uses one process-local store for
+dates and follow-up questions about that event. Discovery covers recent news
+only, through outlet feeds. The implementation uses one process-local store for
 sessions. Durable multi-instance storage and deployment validation belong to later phases in the [implementation plan](IMPLEMENTATION_PLAN.md).

@@ -21,10 +21,9 @@ Disable its retry when the application retries the same operation itself.
 DNS lookup uses the platform resolver; its blocking duration remains controlled
 by the OS rather than the socket timeout.
 
-Discovery uses current RSS/Atom entries. Older windows use bounded NBC monthly
-archives, CBS monthly sitemaps, and New York Post daily archives. Other outlets
-return an explicitly qualified feed-only result. Historical completeness is
-unknown, and archive pages/results are capped. Article reads independently check
+Discovery uses current RSS/Atom entries from every feed configured for an outlet.
+Publisher archive and sitemap discovery was removed on November 18, 2026; the
+product targets recent news. Feed completeness is unknown. Article reads independently check
 publication dates. A search miss never establishes missing outlet coverage.
 
 Only exact assigned HTTPS hosts are permitted. Redirects are checked before

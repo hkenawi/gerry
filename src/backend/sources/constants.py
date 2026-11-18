@@ -65,6 +65,11 @@ class OutletIdentifier(StrEnum):
     BREITBART = "breitbart"
     NEW_YORK_POST = "nypost"
     EXAMINER = "examiner"
+    GUARDIAN = "guardian"
+    SALON = "salon"
+    MOTHER_JONES = "motherjones"
+    FREE_BEACON = "freebeacon"
+    JUST_THE_NEWS = "justthenews"
 
 
 @dataclass(frozen=True)
