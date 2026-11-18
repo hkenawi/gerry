@@ -20,6 +20,7 @@ from backend.application.evidence.recent_events import (
 )
 
 MAX_HEADLINES_FOR_CLUSTERING: int = 40
+MAX_FEED_ISSUE_LABEL_WORDS: int = 9
 LABEL_UNSAFE: re.Pattern[str] = re.compile(r"[“”\"\[\]\\`<>]")
 
 
@@ -34,6 +35,8 @@ class TopicOption:
     first_date: date
     last_date: date
     headlines: tuple[str, ...]
+    description: str = ""
+    candidates: tuple[ArticleCandidate, ...] = ()
 
 
 def candidate_day(candidate: ArticleCandidate) -> date | None:
@@ -94,6 +97,25 @@ def find_proposal_problems(proposal: TopicProposal, headline_count: int) -> str 
     return None
 
 
+def find_feed_issue_problems(
+    proposal: TopicProposal,
+    candidates: list[ArticleCandidate],
+) -> str | None:
+    """Require short issue names and a scope, and reject copied feed headlines."""
+    problem: str | None = find_proposal_problems(proposal, len(candidates))
+    if problem:
+        return problem
+    headline_word_sets: set[frozenset[str]] = {
+        headline_terms(candidate.title) for candidate in candidates
+    }
+    for issue in proposal.topics:
+        if not issue.description.strip() or len(issue.label.split()) > MAX_FEED_ISSUE_LABEL_WORDS:
+            return "Give each issue a short name of up to nine words and a scope description."
+        if headline_terms(issue.label) in headline_word_sets:
+            return "Use a broader issue name. Do not repeat or lightly edit a publisher headline."
+    return None
+
+
 def clean_label(label: str) -> str:
     """
     Collapse whitespace and drop characters that would break the choice link.
@@ -104,6 +126,8 @@ def clean_label(label: str) -> str:
 def build_topic_options(
     proposal: TopicProposal,
     candidates: list[ArticleCandidate],
+    *,
+    minimum_outlets: int = MINIMUM_OUTLETS,
 ) -> tuple[TopicOption, ...]:
     """
     Keep topics backed by real headlines from at least two outlets, best covered first.
@@ -118,49 +142,30 @@ def build_topic_options(
         ]
         outlets: tuple[str, ...] = tuple(dict.fromkeys(member.outlet_id for member in members))
         days: list[date] = [day for member in members if (day := candidate_day(member))]
-        if len(label) < 3 or label.casefold() in labels or len(outlets) < MINIMUM_OUTLETS or not days:
+        if len(label) < 3 or label.casefold() in labels or len(outlets) < minimum_outlets or not days:
             continue
         labels.add(label.casefold())
         options.append(TopicOption(
-            label, outlets, min(days), max(days), tuple(member.title for member in members),
+            label,
+            outlets,
+            min(days),
+            max(days),
+            tuple(member.title for member in members),
+            " ".join(topic.description.split()),
+            tuple(members),
         ))
     options.sort(key=lambda option: (-len(option.outlet_ids), -option.last_date.toordinal()))
     return tuple(options[:MAX_TOPICS])
 
 
 def word_overlap_topics(candidates: list[ArticleCandidate]) -> tuple[TopicOption, ...]:
-    """
-    Last resort without a model: group headlines by shared words, labelled by one headline.
-    """
+    """Group headlines by shared words and rank topics by distinct outlet count."""
     return tuple(
         TopicOption(
             clean_label(event.headline), event.outlet_ids, event.first_date, event.last_date,
-            (event.headline,),
+            tuple(member.title for member in event.candidates),
+            candidates=event.candidates,
         )
         for event in cluster_events(candidates, MAX_TOPICS)
         if len(clean_label(event.headline)) >= 3
     )
-
-
-def rank_related(
-    options: tuple[TopicOption, ...],
-    query_terms: frozenset[str],
-    exclude: tuple[TopicOption, ...] = (),
-) -> tuple[TopicOption, ...]:
-    """
-    Order topics by how many of the reader's words their headlines share.
-    """
-    taken: set[str] = {headline for option in exclude for headline in option.headlines}
-    candidates: list[TopicOption] = [
-        option for option in options if not taken & set(option.headlines)
-    ]
-
-    def overlap(option: TopicOption) -> int:
-        """Count the reader's words found in the topic's headlines."""
-        terms: frozenset[str] = frozenset().union(*(headline_terms(h) for h in option.headlines))
-        return len(query_terms & terms)
-
-    candidates.sort(key=lambda option: (
-        -overlap(option), -len(option.outlet_ids), -option.last_date.toordinal(),
-    ))
-    return tuple(candidates)

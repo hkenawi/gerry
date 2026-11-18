@@ -26,7 +26,6 @@ class SourceLimits:
     max_retries: int = 1
     minimum_article_words: int = 100
     max_results_per_outlet: int = 10
-    max_archive_pages: int = 4
     duplicate_similarity: float = 0.85
 
     def __post_init__(self) -> None:
@@ -35,7 +34,7 @@ class SourceLimits:
             self.timeout_seconds <= 0 or self.max_response_bytes < 1
             or self.max_redirects < 0 or self.max_retries < 0
             or self.minimum_article_words < 1 or self.max_results_per_outlet < 1
-            or self.max_archive_pages < 1 or not 0 < self.duplicate_similarity <= 1
+            or not 0 < self.duplicate_similarity <= 1
         ):
             raise ValueError("Source limits must be positive; retry counts may be zero.")
 

@@ -5,6 +5,7 @@ The Lead's ``write_answer`` tool delegates here to select the answer mode from
 saved articles, check the Lead's alignment and the Writer's claims, and store
 the rendered Markdown in the request state."""
 
+import re
 import json
 import logging
 
@@ -14,9 +15,10 @@ from agents.models.interface import Model
 from agents.exceptions import MaxTurnsExceeded
 
 from backend.sources.articles import ArticleRecord
-from backend.agents.writer.schemas import WriterReport
+from backend.agents.writer.schemas import WriterReport, WriterReportType
 from backend.agents.lead.schemas import AspectAlignment
 from backend.agents.researcher_findings import SourceGroup
+from backend.application.answer.aspects import include_main_focuses
 from backend.application.turn.request_state import RequestState
 from backend.application.turn.structured_run import run_with_correction
 from backend.application.evidence.collected_evidence import collect_articles_by_group
@@ -40,6 +42,12 @@ from backend.application.answer.answer_rendering import (
 
 logger: logging.Logger = logging.getLogger(__name__)
 MAX_WRITER_CALLS: int = 2
+FULL_REPORT_REQUEST: re.Pattern[str] = re.compile(
+    r"\b(?:full|detailed|complete|entire|comprehensive|in[- ]depth)\s+"
+    r"(?:coverage\s+)?(?:report|briefing|comparison)\b"
+    r"|\b(?:report|briefing|comparison)\s+in full\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -70,11 +78,23 @@ async def write_answer(
     """Write, validate, and store the briefing, or a detailed report, or explain the failure."""
     if state.writer_calls >= MAX_WRITER_CALLS:
         return refuse("The Writer has already been tried the maximum number of times.")
+    question = state.reader_question or question
+    detailed = detailed and bool(FULL_REPORT_REQUEST.search(question))
+    report_type: WriterReportType = WriterReportType.BRIEFING
+    if detailed:
+        report_type = WriterReportType.DETAILED
+    elif state.reusing_research:
+        report_type = WriterReportType.FOLLOW_UP
+        alignment = []
     articles_by_group: dict[SourceGroup, tuple[ArticleRecord, ...]] = (
         collect_articles_by_group(state)
     )
     assessment: SampleAssessment = assess_sample(articles_by_group)
-    if not detailed and not alignment and assessment.mode is AnswerMode.COMPARISON:
+    if (
+        report_type is WriterReportType.BRIEFING
+        and not alignment
+        and assessment.mode is AnswerMode.COMPARISON
+    ):
         return refuse(
             "A comparison needs at least one aspect in the alignment. List what each "
             "group's articles covered; if both covered the same aspects, list them for "
@@ -97,10 +117,22 @@ async def write_answer(
         for group, group_articles in articles_by_group.items()
     }
     alignment_problems: list[str] = find_alignment_problems(
-        alignment, passage_ids_by_group
+        alignment,
+        passage_ids_by_group,
+        main_focus_passages={
+            group: {
+                passage_id
+                for findings in state.findings[group]
+                for focus in findings.main_focuses
+                for passage_id in focus.passage_ids
+            }
+            for group in SourceGroup
+        } if state.issue is not None else None,
     )
     if alignment_problems:
         return refuse(" ".join(alignment_problems))
+    if report_type is not WriterReportType.FOLLOW_UP:
+        alignment = include_main_focuses(alignment, state.findings)
     articles: tuple[ArticleRecord, ...] = tuple(
         article for group in SourceGroup for article in articles_by_group[group]
     )
@@ -110,9 +142,7 @@ async def write_answer(
         for article in articles
         for passage in article.passages
     }
-    previous_answers: tuple[str, ...] = (
-        state.previous_answers if detailed and state.reusing_research else ()
-    )
+    previous_answers: tuple[str, ...] = state.previous_answers if state.reusing_research else ()
 
     def validate(report: WriterReport) -> str | None:
         """Reject claims with unknown citations or outside the answer mode."""
@@ -133,8 +163,9 @@ async def write_answer(
         alignment,
         [item for items in state.findings.values() for item in items],
         articles,
-        detailed,
+        report_type,
         previous_answers=previous_answers,
+        issue_scope=state.issue.description if state.issue is not None else "",
     )
     report: WriterReport | None
     problem: str | None
@@ -155,14 +186,8 @@ async def write_answer(
         return refuse(problem or "The Writer could not produce a valid answer.")
     if report.evidence_gap:
         return refuse(f"The Writer needs more evidence. {report.evidence_gap}")
-    if previous_answers:
-        state.final_answer = render_followup(
-            report,
-            assessment,
-            articles,
-            state.failed_reads,
-            previous_answers,
-        )
+    if report_type is WriterReportType.FOLLOW_UP:
+        state.final_answer = render_followup(report, articles)
     else:
         state.final_answer = render_answer(
             report,

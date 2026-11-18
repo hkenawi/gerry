@@ -19,15 +19,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from backend.application.settings import Settings
+from backend.sources.access import ArticleCandidate
+from backend.application.evidence.topic_clusters import TopicOption
 from backend.application.turn.run_turn import TurnResult, run_turn
 from backend.interfaces.http.chat_contracts import ChatRequest, ChatResponse
 from backend.application.turn.tool_calls import ToolCallOutcome, ToolCallRecord
 from backend.application.evidence.outlet_assignments import outlet_display_name
 from backend.interfaces.http.recent_event_contracts import RecentEdition, RecentStory
-from backend.application.evidence.recent_events import (
-    EventCandidate,
-    discover_events,
-    start_of_month_window,
+from backend.application.turn.topic_step import (
+    group_feed_issues,
+    prepare_research_issue,
+    search_headlines,
 )
 from backend.application.turn.request_state import (
     RequestState,
@@ -57,6 +59,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 MAX_PROGRESS_STREAMS: int = 100
 RECENT_EDITION_LIMIT: int = 5
 RECENT_EDITION_TTL_SECONDS: int = 600
+EMPTY_EDITION_TTL_SECONDS: int = 60
 FRONTEND_DIRECTORY: Path = Path(__file__).resolve().parents[3] / "frontend"
 
 
@@ -127,41 +130,43 @@ def create_http_app(
 
     @app.get("/recent-events")
     async def serve_recent_events() -> RecentEdition:
-        """Refresh the front-page edition from approved publishers without a model call."""
+        """Refresh the front-page edition with issues from the approved feeds."""
         nonlocal edition, edition_expires_at
         async with edition_lock:
-            end: date = datetime.now(UTC).date()
+            end: date = date.today()
             if (
                 edition is not None
                 and edition.end_date == end
                 and time.monotonic() < edition_expires_at
             ):
                 return edition
-            start: date = start_of_month_window(end)
-            try:
-                events: tuple[EventCandidate, ...] = await asyncio.to_thread(
-                    discover_events, sources.discover_headlines, "", start, end,
-                    RECENT_EDITION_LIMIT,
-                )
-            except Exception as error:
-                logger.error("Recent edition discovery failed (%s).", type(error).__name__)
-                raise HTTPException(503, "Recent headlines could not be loaded.") from error
+            edition_state: RequestState = build_request_state(
+                "front-page-edition", settings, store, sources,
+            )
+            headlines: list[ArticleCandidate] | None = await search_headlines(edition_state, "", end)
+            if headlines is None:
+                raise HTTPException(503, "Recent headlines could not be loaded.")
+            options: tuple[TopicOption, ...] = await group_feed_issues(
+                edition_state, model, model_settings, end, headlines,
+            )
             edition = RecentEdition(
-                start_date=start,
                 end_date=end,
                 events=[
                     RecentStory(
-                        headline=event.headline,
-                        headline_outlet=outlet_display_name(event.headline_outlet),
+                        headline=event.label,
+                        headline_outlet=outlet_display_name(event.candidates[0].outlet_id),
                         reported_by=[outlet_display_name(outlet) for outlet in event.outlet_ids],
                         first_date=event.first_date,
                         last_date=event.last_date,
-                        snippet=event.snippet,
+                        snippet=event.description or event.candidates[0].snippet,
+                        issue_id=store.publish_issue(prepare_research_issue(event)),
                     )
-                    for event in events
+                    for event in options[:RECENT_EDITION_LIMIT]
                 ],
             )
-            edition_expires_at = time.monotonic() + RECENT_EDITION_TTL_SECONDS
+            edition_expires_at = time.monotonic() + (
+                RECENT_EDITION_TTL_SECONDS if options else EMPTY_EDITION_TTL_SECONDS
+            )
             return edition
 
     @app.post("/chat", response_model=ChatResponse)
@@ -219,7 +224,9 @@ def create_http_app(
                 record.conversation_id, settings, store, sources, on_tool_record=report_tool,
             )
             publish(ProgressEventType.AGENT_STARTED, "lead", "Reviewing your question.")
-            result: TurnResult = await run_turn(request.messages, state, model, model_settings)
+            result: TurnResult = await run_turn(
+                request.messages, state, model, model_settings, issue_id=request.issue_id,
+            )
         except asyncio.CancelledError:
             store.interrupt_request(request.request_id)
             raise

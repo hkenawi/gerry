@@ -20,7 +20,7 @@ from backend.agents.researcher_findings import SourceGroup
 from backend.application.turn.request_state import RequestState
 from backend.application.turn.tool_calls import ToolCallOutcome
 from backend.application.turn.structured_run import BudgetExceeded
-from backend.application.evidence.recent_events import start_of_month_window
+from backend.sources.constants import SOURCE_CONSTANTS
 from backend.agents.research_brief import BriefStatus, ResearchBrief
 from backend.agents.researcher.agent import ResearcherOutcome, run_researcher
 from backend.application.answer.write_answer import WriteResult, write_answer
@@ -36,22 +36,16 @@ RESEARCH_TOOL_NAMES: dict[SourceGroup, str] = {
 def check_brief(
     state: RequestState,
     event: str,
-    start_date: str | None,
-    end_date: str | None,
     *,
     today: date | None = None,
 ) -> tuple[tuple[date, date] | None, str | None]:
     """Validate the brief and fix the event and window on the first call."""
     previous: ResearchBrief | None = state.brief
+    if state.issue is not None and event != state.issue.label:
+        return None, f"Use the resolved issue label exactly: {state.issue.label!r}."
     try:
-        end: date = (
-            date.fromisoformat(end_date) if end_date is not None
-            else (previous.end_date if previous else None) or today or datetime.now(UTC).date()
-        )
-        start: date = (
-            date.fromisoformat(start_date) if start_date is not None
-            else (previous.start_date if previous else None) or start_of_month_window(end)
-        )
+        end: date = (previous.end_date if previous else None) or today or datetime.now(UTC).date()
+        start: date = (previous.start_date if previous else None) or SOURCE_CONSTANTS.feed_start_date
         brief: ResearchBrief = ResearchBrief.model_validate(
             {
                 "status": BriefStatus.CLEAR,
@@ -61,12 +55,10 @@ def check_brief(
             }
         )
     except ValueError:
-        return None, "The event, start_date, and end_date were not a valid brief."
+        return None, "The event was not a valid brief."
     assert brief.start_date is not None and brief.end_date is not None
     if previous is None:
         state.brief = brief
-    elif (previous.start_date, previous.end_date) != (brief.start_date, brief.end_date):
-        return None, "The event window is fixed after the first research call."
     elif previous.event != brief.event:
         return None, "The event is fixed after the first research call."
     return (brief.start_date, brief.end_date), None
@@ -91,8 +83,6 @@ async def research_group(
     state: RequestState,
     group: SourceGroup,
     event: str,
-    start_date: str | None,
-    end_date: str | None,
     focus_question: str | None,
     model: Model,
     model_settings: ModelSettings | None,
@@ -102,8 +92,7 @@ async def research_group(
     """Run a group research round and return findings or a failure as JSON."""
     tool_name: str = RESEARCH_TOOL_NAMES[group]
     args: dict[str, JsonValue] = {
-        "event": event, "start_date": start_date, "end_date": end_date,
-        "focus_question": focus_question,
+        "event": event, "focus_question": focus_question,
     }
 
     def reject_research(reason: str | None) -> str:
@@ -112,7 +101,7 @@ async def research_group(
 
     window: tuple[date, date] | None
     problem: str | None
-    window, problem = check_brief(state, event, start_date, end_date, today=today)
+    window, problem = check_brief(state, event, today=today)
     if problem is not None or window is None:
         return reject_research(problem)
     if not state.try_start_round(group):
@@ -130,6 +119,7 @@ async def research_group(
                 state.conversation_id,
                 brief,
                 (*(item for items in state.findings.values() for item in items), outcome.findings),
+                **({"issue": state.issue} if state.issue is not None else {}),
             )
     except BudgetExceeded:
         return reject_research("The research limit was reached before this group finished.")
@@ -162,8 +152,6 @@ def build_research_tool(
     async def run(
         context: RunContextWrapper[RequestState],
         event: str,
-        start_date: str | None,
-        end_date: str | None,
         focus_question: str | None,
     ) -> str:
         """
@@ -171,15 +159,11 @@ def build_research_tool(
 
         Args:
             event: The named subject to research, such as the Paris riots.
-            start_date: First publication date, ISO format, or null for the default.
-            end_date: Last publication date, ISO format, or null for the default.
             focus_question: A neutral follow-up question, or null for a broad pass."""
         return await research_group(
             context.context,
             group,
             event,
-            start_date,
-            end_date,
             focus_question,
             model,
             model_settings,
@@ -191,8 +175,7 @@ def build_research_tool(
         name_override=RESEARCH_TOOL_NAMES[group],
         description_override=(
             f"Research a named subject with a fresh {group.value} researcher. Use this "
-            "alongside the other group's tool for a specific event or series, preserving "
-            "the reader's full requested period."
+            "alongside the other group's tool to search current feeds for the same event."
         ),
     )
 
@@ -214,10 +197,9 @@ def build_writer_tool(
 
         Args:
             question: The reader's question, in plain words.
-            alignment: Comparison rows for a briefing or full report. Use an
-                empty list when expanding an earlier answer.
-            detailed: True when the reader asks for more detail, a full report,
-                sources, or excerpts."""
+            alignment: Coverage aspects for a briefing or full report. Use an
+                empty list for a direct follow-up.
+            detailed: True only for an explicit request for a full report."""
         state: RequestState = context.context
         result: WriteResult = await write_answer(
             state, model, model_settings, question, alignment, detailed

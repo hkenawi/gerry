@@ -8,6 +8,7 @@ from datetime import date
 from collections.abc import Callable
 
 from backend.application.settings import Settings
+from backend.application.evidence.outlet_assignments import outlets_for_group
 from backend.sources.constants import SourceAccessStatus
 from backend.sources.service import ArticleSourceService
 from backend.agents.researcher_findings import SourceGroup
@@ -53,7 +54,7 @@ async def test_search_is_bound_to_the_groups_outlets_and_the_window(
     await tools.search_articles("France protests")
 
     call = fake_sources.search_calls[0]
-    assert call["assigned_outlets"] == ("npr", "nbc", "huffpost", "abc", "cbs")
+    assert call["assigned_outlets"] == outlets_for_group(SourceGroup.LIBERAL)
     assert (call["start_date"], call["end_date"]) == WINDOW
 
 
@@ -99,8 +100,8 @@ async def test_invalid_search_reports_failure_for_each_assigned_outlet(
     result: ArticleSearchResult = await build_tools(state).search_articles(" ")
 
     assert result.candidates == ()
-    assert tuple(outcome.outlet_id for outcome in result.outcomes) == (
-        "npr", "nbc", "huffpost", "abc", "cbs",
+    assert tuple(outcome.outlet_id for outcome in result.outcomes) == outlets_for_group(
+        SourceGroup.LIBERAL,
     )
     assert {outcome.status for outcome in result.outcomes} == {
         SourceAccessStatus.FETCH_FAILED,

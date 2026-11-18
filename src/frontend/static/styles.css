@@ -121,14 +121,16 @@ main {
   gap: clamp(18px, 2.5vw, 32px);
 }
 
-.chat { min-width: 0; }
+.chat { min-width: 0; container-type: inline-size; }
 
 #purpose {
-  max-width: 11ch;
   margin: 0;
-  font: clamp(62px, 7vw, 100px)/.91 var(--serif);
+  font: clamp(32px, 16cqi, 100px)/.91 var(--serif);
   letter-spacing: -.02em;
-  text-wrap: balance;
+}
+
+@media (max-width: 720px) {
+  main:not(.story-view) .front-page { grid-template-columns: minmax(0, 1fr); }
 }
 
 .description {
@@ -357,89 +359,92 @@ summary:focus-visible {
 .research-answer h2 { font: 36px/1.1 var(--serif); }
 .research-answer h3 { font: 29px/1.15 var(--serif); }
 
-/* Coverage comparison: aspect rows, an emphasis marker per side, and a short note. */
-.coverage-compare {
-  width: 100%;
-  margin: 22px 0 6px;
-  border-collapse: collapse;
-  table-layout: fixed;
+.coverage-aspects {
+  margin: 22px 0;
+  border-top: 3px double var(--ink);
 }
 
-.coverage-compare th {
-  padding: 0 16px 9px 0;
-  border-bottom: 3px double var(--ink);
+.coverage-aspects > h2 { margin: 16px 0 4px; }
+
+.aspect-columns,
+.coverage-aspect {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+}
+
+/* Newspaper look: ruled mastheads, serif headlines, justified columns. */
+.aspect-columns {
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--ink);
+  font: 700 12px/1 var(--serif);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
   color: var(--accent);
-  font: 700 15px/1.2 "Barlow Condensed", Impact, sans-serif;
-  letter-spacing: .14em;
+}
+
+.aspect-columns span { padding: 14px 28px; text-align: center; }
+.aspect-columns span + span,
+.aspect-conservative { border-left: 1px solid var(--ink); }
+
+.coverage-aspect {
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 22px;
+  margin-bottom: 28px;
+}
+
+.coverage-aspect h3 {
+  grid-column: 1 / -1;
+  margin: 0 0 20px;
+  padding: 16px 20px 14px;
+  text-align: center;
+  font: 900 clamp(22px, 3.2vw, 32px)/1.1 var(--serif);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-top: 3px double var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.coverage-aspect p {
+  margin: 0;
+  padding: 0 28px;
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.7;
   text-align: left;
-  text-transform: uppercase;
 }
 
-.coverage-compare th:first-child,
-.coverage-compare td:first-child { width: 22%; }
-
-.coverage-compare td {
-  padding: 16px 16px 16px 0;
-  border-bottom: 1px solid var(--rule);
-  overflow-wrap: anywhere;
-  vertical-align: top;
-}
-
-.coverage-compare td:first-child { font: 25px/1.05 var(--serif); }
-
-.coverage-compare .emphasis {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--muted-ink);
-  font: 700 12px/1.2 "Barlow Condensed", Impact, sans-serif;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.coverage-compare .dots {
-  margin-right: 4px;
-  color: var(--accent);
-  font-size: 15px;
-  letter-spacing: .12em;
-}
-
-.coverage-compare .emphasis-0 { opacity: .55; }
-.coverage-compare .emphasis-0 .dots { color: var(--muted-ink); }
-
-.coverage-compare .coverage-note {
-  display: block;
-  font: 16px/1.45 Georgia, serif;
-}
-
-.coverage-legend {
-  margin: 0 0 8px;
-  color: var(--muted-ink);
-  font-size: 13px;
-  font-style: normal;
+.aspect-liberal::first-letter,
+.aspect-conservative::first-letter {
+  float: left;
+  font: 700 1.5em/1 var(--serif);
+  padding: 0 3px 0 0;
 }
 
 @media (max-width: 640px) {
-  .coverage-compare,
-  .coverage-compare tbody,
-  .coverage-compare tr,
-  .coverage-compare td { display: block; width: auto; }
-
-  .coverage-compare thead { display: none; }
-  .coverage-compare tr { padding: 14px 0; border-bottom: 1px solid var(--rule); }
-
-  .coverage-compare td,
-  .coverage-compare td:first-child { width: auto; padding: 3px 0; border: 0; }
-
-  .coverage-compare td[data-label]:not(:first-child)::before {
-    content: attr(data-label);
+  .aspect-columns,
+  .coverage-aspect { grid-template-columns: 1fr; }
+  .aspect-columns { display: none; }
+  .aspect-conservative { border-left: 0; border-top: 1px solid var(--ink); margin-top: 12px; padding-top: 12px; }
+  .aspect-liberal::first-letter,
+  .aspect-conservative::first-letter { float: none; font: inherit; padding: 0; }
+  .aspect-liberal::before,
+  .aspect-conservative::before {
     display: block;
-    margin-top: 8px;
-    color: var(--accent);
-    font: 700 12px/1.2 "Barlow Condensed", Impact, sans-serif;
-    letter-spacing: .14em;
+    font-weight: 700;
+    font-size: 12px;
     text-transform: uppercase;
+    color: var(--accent);
   }
+  .aspect-liberal::before { content: "Liberal"; }
+  .aspect-conservative::before { content: "Conservative"; }
 }
+.more-aspects > summary { padding: 12px 0; cursor: pointer; font-weight: 600; }
 
 .research-sources,
 .research-tools {

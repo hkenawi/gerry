@@ -10,7 +10,6 @@ from backend.application.evidence.recent_events import headline_terms
 from backend.application.evidence.topic_clusters import (
     build_topic_options,
     find_proposal_problems,
-    rank_related,
     select_headlines,
 )
 
@@ -100,21 +99,3 @@ def test_undated_and_repeated_headlines_never_reach_the_clusterer() -> None:
     assert [item.title for item in chosen] == [
         "Brazil runoff election results", "Local school board votes",
     ]
-
-
-def test_related_topics_follow_the_readers_words_and_skip_ones_already_shown() -> None:
-    """
-    The topics closest to the request come first, without repeating a matched topic.
-    """
-    candidates = [
-        headline("npr", "Earthquake strikes Turkey"), headline("fox", "Turkey earthquake kills dozens"),
-        headline("nbc", "Brazil runoff results announced"), headline("nypost", "Brazil election runoff decided"),
-    ]
-    turkey, brazil = build_topic_options(
-        proposal(("Turkey earthquake", [1, 2]), ("Brazil runoff", [3, 4])), candidates,
-    )
-
-    ranked = rank_related((turkey, brazil), headline_terms("Brazil runoff elections"))
-
-    assert [option.label for option in ranked] == ["Brazil runoff", "Turkey earthquake"]
-    assert rank_related((turkey, brazil), headline_terms("Turkey"), exclude=(turkey,)) == (brazil,)

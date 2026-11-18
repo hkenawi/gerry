@@ -115,10 +115,73 @@ content. These are attributed ratings; project-owner approval remains pending.
 | Conservative | [New York Post news](https://www.allsides.com/news-source/new-york-post-news-media-bias) | Right |
 | Conservative | [Washington Examiner](https://www.allsides.com/news-source/washington-examiner-media-bias) | Lean Right |
 
+## November 18, 2026 roster expansion
+
+The roster grew from ten to fifteen outlets (eight liberal, seven conservative)
+and most outlets gained a second feed. These checks were narrower than the
+November 8 pass: `curl` GETs with the application's `Gerry/0.1` user agent,
+one sampled article per outlet, and a search for `isAccessibleForFree`,
+`headline`, and `datePublished` in the page. Article text was not extracted and
+no historical samples were taken. Paywalled outlets were excluded by project
+decision. AllSides ratings were looked up through the chat web search tool
+because direct `curl` requests to AllSides returned 403.
+
+### Added outlets
+
+| Group | Outlet/profile | AllSides rating (confidence) | Feeds |
+| --- | --- | --- | --- |
+| Liberal | [The Guardian](https://www.allsides.com/news-source/guardian-media-bias) | Left (low; moved from Lean Left in Nov 2024) | `/us-news/rss`, `/us-news/us-politics/rss` |
+| Liberal | [Salon](https://www.allsides.com/news-source/salon-media-bias) | Left (medium) | `/feed/`, `/category/politics/feed/` |
+| Liberal | [Mother Jones](https://www.allsides.com/news-source/mother-jones-media-bias) | Left (low) | `/feed/`, `/politics/feed/` |
+| Conservative | [Washington Free Beacon](https://www.allsides.com/news-source/washington-free-beacon-media-bias) | Right (high) | `/feed/` |
+| Conservative | [Just the News](https://www.allsides.com/news-source/just-news-media-bias) | Lean Right (low) | `/rss.xml` |
+
+Sampled feeds returned HTTP 200 with parseable RSS and 10 to 32 items. Salon's
+feeds redirect within `www.salon.com`. The Just the News feed is not strictly
+recent-first (an item from 2017 appeared near the top). The Guardian feed
+contains live blogs. The Mother Jones sample article had no `headline` in its
+structured metadata, so extraction from Mother Jones is untested. The Free
+Beacon and Just the News samples declared no `isAccessibleForFree` value; that
+does not establish that they are free everywhere.
+
+### Added politics feeds for existing outlets
+
+NPR (`feeds.npr.org/1014/rss.xml`), NBC (`/nbcnews/public/politics`), HuffPost
+(`/section/politics/feed`), ABC (`/abcnews/politicsheadlines`), CBS
+(`/latest/rss/politics`), Fox (`/google-publisher/politics.xml`), New York Post
+(`/politics/feed/`), and Washington Examiner (`/category/news/politics/feed/`)
+returned HTTP 200 with parseable RSS and were added next to each existing feed.
+Daily Caller's politics feed returned 404 and Breitbart's politics feed
+redirected to the same main feed, so both keep their single existing feed.
+
+### Candidates tested and not added
+
+| Outlet | Reason |
+| --- | --- |
+| Reason | AllSides rating is Center (moved from Lean Right in Sept 2024); roster accepts only Left, Lean Left, Lean Right, Right. |
+| Vox, National Review, Newsweek | Sampled articles declared `isAccessibleForFree: false`. |
+| Politico, Axios, The Hill, The Daily Signal | Article requests returned 403. |
+| USA Today, Washington Times, The Federalist | Feed requests returned 402 or 403. |
+| Daily Wire | Known membership paywall; not tested further. |
+| Newsmax, Townhall, The Epoch Times, The Independent, Spectator, CBN | No usable feed found with the URLs tried. |
+| Hot Air | AllSides page shows a 2.0 score but "Not Rated"; rating unclear. |
+| The Blaze, RedState, PJ Media | Passed feed and article checks (Right) but are mostly opinion; not chosen. |
+
+These results describe the specific URLs and user agent tried on this date.
+
+### Archive discovery removed
+
+NBC monthly archives, CBS monthly sitemaps, and New York Post daily archives
+were removed from the application on November 18, 2026. The product asks users
+to ask about recent news, so discovery uses only each outlet's current feeds.
+The historical-search notes above record the original Phase 0 findings.
+
 ## Remaining source checks
 
 - Validate historical discovery across all outlets and more event windows.
 - Resolve short Examiner bodies, extraction cleanup, CBS bylines, and date conflicts.
+- Run article extraction and date checks on the five added outlets, especially
+  Mother Jones, and confirm the Just the News feed's date ordering.
 - Compare syndicated text across outlets; attribution alone is not deduplication.
 - Exercise missing dates, access restrictions, and fetch/extraction failures with
   controlled fixtures during implementation.

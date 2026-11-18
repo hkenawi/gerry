@@ -124,6 +124,13 @@ async def run_researcher(
         return None
 
     assignment: str = describe_assignment(group, event, window, focus_question)
+    if state.issue is not None:
+        assignment += (
+            f"\nIssue scope: {state.issue.description or state.issue.label}"
+            "\nSearch returns feed candidates already assigned to this issue. Read the full "
+            "articles and keep only material that addresses this issue. A roundup may also "
+            "cover unrelated subjects. Exclude those subjects from your findings."
+        )
     output: ResearcherFindings | None
     problem: str | None
     output, problem = await run_with_correction(

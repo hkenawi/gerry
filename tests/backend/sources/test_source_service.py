@@ -29,7 +29,7 @@ ARTICLE_HTML: bytes = b'''<html><head><title>Earthquake rescue efforts</title>
 <link rel="canonical" href="https://www.npr.org/story">
 <script type="application/ld+json">{"@type":"NewsArticle",
 "url":"https://www.npr.org/story","headline":"Earthquake rescue efforts",
-"datePublished":"2026-11-07T09:00:00-05:00",
+        "datePublished":"2026-11-07T09:00:00-05:00",
 "author":{"@type":"Person","name":"Example Reporter"}}</script>
 </head><body><article><h1>Earthquake rescue efforts</h1>
 <p>Emergency workers continued rescue operations after an earthquake damaged
@@ -80,7 +80,7 @@ async def test_turn_uses_real_source_discovery_extraction_and_evidence_storage()
         ArticleSourceService(store, fetcher=fetch_fixture),
     )
     brief: dict[str, str] = {
-        "event": "Earthquake rescue", "start_date": "2026-11-07", "end_date": "2026-11-08",
+        "event": "Earthquake rescue", "start_date": "0001-01-01", "end_date": "2026-11-08",
     }
 
     def reply(call: ModelCall) -> ToolCalls | FinalOutput:
@@ -89,7 +89,7 @@ async def test_turn_uses_real_source_discovery_extraction_and_evidence_storage()
         if "You are the Lead" in call.system_instructions:
             if not outputs:
                 return ToolCalls([
-                    (f"research_{group}_coverage", {**brief, "focus_question": None})
+                    (f"research_{group}_coverage", {"event": brief["event"], "focus_question": None})
                     for group in ("liberal", "conservative")
                 ])
             if len(outputs) == 2:
@@ -138,13 +138,14 @@ async def test_turn_uses_real_source_discovery_extraction_and_evidence_storage()
         })
 
     result: TurnResult = await run_turn(
-        [ChatMessage.model_validate({"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"})],
+        [ChatMessage.model_validate({"role": "user", "content": "How did different outlets cover “Paris protests”?"})],
         state, ScriptedModel(reply), today=date(2026, 11, 8),
     )
 
     assert result.failure is None
     assert result.answer.startswith("Both groups reported rescue work after the earthquake. [1]")
-    assert "| Rescue work | ●●● central · Reported rescue work. [" in result.answer
+    assert "### Rescue work" in result.answer
+    assert "Reported rescue work." in result.answer
     assert "## Sources" in result.answer
     assert {article.canonical_url for article in state.store.list_articles(state.conversation_id)} == set(urls)
 
@@ -155,7 +156,7 @@ def build_store() -> tuple[InMemoryStore, str]:
     request: ChatRequest = ChatRequest.model_validate(
         {
             "conversation_id": None, "request_id": "source-test",
-            "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests” from 2026-11-01 to 2026-11-07?"}],
+            "messages": [{"role": "user", "content": "How did different outlets cover “Paris protests”?"}],
         },
     )
     record, _ = store.begin_request(request)
@@ -430,26 +431,34 @@ def test_storage_failure_when_loading_collected_articles_is_a_failed_read() -> N
     assert result.article is None
 
 
-def test_headline_discovery_without_a_topic_lists_every_dated_feed_entry() -> None:
-    """Recent-event discovery needs the feed's headlines, not a keyword match."""
+def test_unfiltered_feed_discovery_includes_older_entries_and_bypasses_search_cap() -> None:
+    """The top-stories pool includes dated entries across the entire feed snapshot."""
     store, _ = build_store()
     feed: bytes = b'''<rss><channel>
-<item><title>Quake rocks coastal city</title><link>https://www.npr.org/a</link>
-<pubDate>Sat, 07 Nov 2026 09:00:00 -0500</pubDate></item>
-<item><title>Election results announced</title><link>https://www.npr.org/b</link>
-<pubDate>Sat, 07 Nov 2026 10:00:00 -0500</pubDate></item></channel></rss>'''
+<item><title>Quake rocks coastal city</title><link>https://www.nbcnews.com/a</link>
+<pubDate>2026-11-07</pubDate></item>
+<item><title>Election results announced</title><link>https://www.nbcnews.com/b</link>
+<pubDate>2026-05-07</pubDate></item></channel></rss>'''
 
     def fetch_feed(url: str, hosts: tuple[str, ...], limits: SourceLimits) -> FetchedDocument:
         """Serve the same two-item feed for every request."""
+        assert url == "https://feeds.nbcnews.com/nbcnews/public/world"
         return FetchedDocument(url, feed, "application/rss+xml")
 
-    service = ArticleSourceService(store, fetcher=fetch_feed)
-    everything = service.discover_headlines("", date(2026, 11, 7), date(2026, 11, 8), ("npr",))
-    filtered = service.discover_headlines("quake", date(2026, 11, 7), date(2026, 11, 8), ("npr",))
+    service: ArticleSourceService = ArticleSourceService(
+        store, fetcher=fetch_feed, limits=SourceLimits(max_results_per_outlet=1),
+    )
+    end: date = date(2026, 11, 8)
+    everything: ArticleSearchResult = service.discover_headlines("", date.min, end, ("nbc",))
+    filtered: ArticleSearchResult = service.discover_headlines("quake", date.min, end, ("nbc",))
+    alternate: ArticleSearchResult = service.discover_headlines(
+        "ballot count | election results", date.min, end, ("nbc",),
+    )
 
     assert [c.title for c in everything.candidates] == [
         "Quake rocks coastal city", "Election results announced",
     ]
     assert [c.title for c in filtered.candidates] == ["Quake rocks coastal city"]
+    assert [c.title for c in alternate.candidates] == ["Election results announced"]
     with pytest.raises(ValueError):
-        service.search_articles("", date(2026, 11, 7), date(2026, 11, 8), ("npr",))
+        service.search_articles("", date.min, end, ("nbc",))

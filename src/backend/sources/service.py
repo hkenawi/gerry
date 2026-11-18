@@ -17,7 +17,7 @@ from backend.infrastructure.persistence import InMemoryStore
 from backend.sources.articles.extraction import extract_article
 from backend.sources.outlets import OUTLETS, OutletConfiguration
 from backend.sources.constants import SOURCE_CONSTANTS, SourceAccessStatus
-from backend.sources.discovery import build_discovery_urls, parse_discovery_document
+from backend.sources.discovery import FEED_SCOPE, parse_discovery_document
 from backend.sources.access import (
     ArticleCandidate,
     ArticleReadResult,
@@ -89,9 +89,8 @@ class ArticleSourceService:
                     detail="Outlet is not in the approved roster.",
                 ))
                 continue
-            urls: tuple[str, ...]
-            scope: str
-            urls, scope = build_discovery_urls(outlet, start_date, end_date, self._limits)
+            urls: tuple[str, ...] = outlet.feed_urls
+            scope: str = FEED_SCOPE
             hosts: tuple[str, ...] = tuple(
                 dict.fromkeys((*outlet.feed_hosts, *outlet.article_hosts)),
             )
@@ -105,7 +104,6 @@ class ArticleSourceService:
                     self._validate_document(document, hosts)
                     for candidate in parse_discovery_document(
                         document, outlet, query, start_date, end_date,
-                        expect_feed=url in outlet.feed_urls,
                     ):
                         found[candidate.url] = candidate
                 except SourceAccessError as error:
@@ -116,9 +114,9 @@ class ArticleSourceService:
                         SOURCE_CONSTANTS.access_statuses.FETCH_FAILED,
                         "Discovery document could not be fetched or parsed.",
                     )
-            selected: list[ArticleCandidate] = list(found.values())[
-                :self._limits.max_results_per_outlet
-            ]
+            selected: list[ArticleCandidate] = list(found.values())
+            if query or start_date != SOURCE_CONSTANTS.feed_start_date:
+                selected = selected[:self._limits.max_results_per_outlet]
             candidates.extend(selected)
             status: SourceAccessStatus = SOURCE_CONSTANTS.access_statuses.NO_RESULTS
             http_status: int | None = None

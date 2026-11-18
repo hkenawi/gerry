@@ -6,6 +6,7 @@ receives. They validate untrusted client input at the HTTP boundary and carry
 no agent or storage logic.
 """
 
+from uuid import UUID
 from enum import StrEnum
 from dataclasses import dataclass
 from typing import Self, ClassVar
@@ -57,6 +58,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = Field(min_length=1)
     request_id: str = Field(min_length=1)
     messages: list[ChatMessage] = Field(min_length=1)
+    issue_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_message_sequence(self) -> Self:

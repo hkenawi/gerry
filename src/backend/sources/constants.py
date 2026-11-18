@@ -4,6 +4,7 @@ The constants object scopes source-specific enums and validation settings so
 article and access contracts agree without depending on agent runtime code."""
 
 from enum import StrEnum
+from datetime import date
 from typing import ClassVar
 from pydantic import ConfigDict
 from dataclasses import dataclass
@@ -64,6 +65,11 @@ class OutletIdentifier(StrEnum):
     BREITBART = "breitbart"
     NEW_YORK_POST = "nypost"
     EXAMINER = "examiner"
+    GUARDIAN = "guardian"
+    SALON = "salon"
+    MOTHER_JONES = "motherjones"
+    FREE_BEACON = "freebeacon"
+    JUST_THE_NEWS = "justthenews"
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,7 @@ class SourceConstants:
     groups: type[SourceGroup] = SourceGroup
     metadata: type[SourceMetadataField] = SourceMetadataField
     outlet_ids: type[OutletIdentifier] = OutletIdentifier
+    feed_start_date: date = date.min  # Full current-feed scope without a lower date cutoff.
     article_schema_types: tuple[str, ...] = (
         "NewsArticle", "Article", "ReportageNewsArticle", "AnalysisNewsArticle",
         "OpinionNewsArticle",
